@@ -154,6 +154,7 @@ int main(int argc, char** argv) {
         std::error_code ec;
         fs::create_directories(app.base_dir, ec);
         app.role = i == 0 ? CombinatorsApp::Role::Host : CombinatorsApp::Role::Join;
+        app.updates_enabled = false; // a test rig does not ask to update itself
         app.profile_name = names[i];
         app.profile_rgb = colours[i];
         app.device_tag = tags[i];

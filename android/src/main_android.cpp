@@ -98,6 +98,8 @@ void backends_up(Shell& s) {
         scale = scale < 1.3f ? 1.3f : (scale > 5.0f ? 5.0f : scale);
         maiz::apply_touch_metrics(scale); // chrome grows; canvas text doesn't
         s.app.touch_mode = true;
+        s.app.ui_scale = scale; // the layout is decided in dp
+        s.app.android_activity = s.aapp->activity; // JNI: updates over HTTP, the package installer
         s.app.base_dir = s.aapp->activity->internalDataPath
                              ? std::filesystem::path(s.aapp->activity->internalDataPath)
                              : std::filesystem::path("/data/local/tmp");

@@ -17,6 +17,10 @@
   <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
   <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+  <!-- Updating itself (VoidMaiz okf/concepts/updates.md): hand a verified APK to
+       Android's PackageInstaller, which always asks the person to confirm.
+       The person also allows installs from this app, once. -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
   <application
       android:label="Interaction Combinators"
@@ -26,7 +30,7 @@
     <activity
         android:name="android.app.NativeActivity"
         android:exported="true"
-        android:screenOrientation="portrait"
+        android:screenOrientation="fullUser"
         android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|uiMode">
       <meta-data android:name="android.app.lib_name"
                  android:value="interaction_combinators" />

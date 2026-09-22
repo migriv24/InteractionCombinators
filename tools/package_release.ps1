@@ -78,3 +78,39 @@ if (-not $SkipApk) {
     Copy-Item "$root\android\interaction_combinators.apk" "$out\InteractionCombinators-$version.apk" -Force
     Write-Host "android: $out\InteractionCombinators-$version.apk"
 }
+
+# ── the update feed: void-updates.json, which every installed copy reads ──
+# The document is Void Mago's (`mago feed`: the release notes, the behavior
+# changes, the format). Mago names Windows artifacts `-setup.exe` and everything
+# else `.tar.gz`; this app ships a portable .zip and an .apk, so the artifact
+# names, URLs, sizes and digests are filled in here from the files just built.
+# (Asked of Void Mago 2026-09-21: let a manifest declare its artifact names, and
+# this block shrinks to one call.) The feed is uploaded beside the artifacts, and
+# clients read releases/latest/download/void-updates.json.
+$mago = Join-Path (Split-Path $root -Parent) "VoidMago\build\bin\mago.exe"
+if (-not (Test-Path $mago)) { throw "Void Mago not built at $mago (the feed is its document)" }
+$feedText = & $mago feed interactioncombinators
+if ($LASTEXITCODE) { throw "mago feed failed" }
+$feed = $feedText | Out-String | ConvertFrom-Json
+$base = "https://github.com/migriv24/InteractionCombinators/releases/download/v$version"
+$files = [ordered]@{ "windows-x64" = "$name.zip" }
+if (-not $SkipApk) { $files["android-arm64"] = "InteractionCombinators-$version.apk" }
+$artifacts = [ordered]@{}
+foreach ($platform in $files.Keys) {
+    $file = $files[$platform]
+    $path = Join-Path $out $file
+    $artifacts[$platform] = [ordered]@{
+        file = $file
+        url = "$base/$file"
+        bytes = (Get-Item $path).Length
+        sha256 = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+        signature = $null
+    }
+}
+$app = $feed.applications.interactioncombinators
+if ($app.latest -ne $version) { throw "void.json says $($app.latest), VERSION says $version" }
+$app.releases[0].artifacts = [pscustomobject]$artifacts
+# UTF-8 without a BOM: a BOM in front of JSON is not JSON to every parser
+$json = $feed | ConvertTo-Json -Depth 12
+[System.IO.File]::WriteAllText((Join-Path $out "void-updates.json"), $json, (New-Object System.Text.UTF8Encoding $false))
+Write-Host "feed: $out\void-updates.json"

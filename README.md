@@ -21,6 +21,17 @@ From [Releases](https://github.com/migriv24/InteractionCombinators/releases):
   Store key, so Android treats it as a sideloaded app. The APK is solo for now;
   collaborating from a phone needs a LAN transport that is not built yet.
 
+**Updates.** From 0.3.0 the app asks once whether it may check for new versions
+when it starts. If you say yes, a new version appears as an *update* button that
+lists what changes; nothing downloads or installs until you choose it. On Windows
+the new version opens from a folder beside the old one, which is left untouched.
+On Android the system's own installer asks you to confirm. (0.2.0 has no updater,
+so moving to 0.3.0 is by hand, once.)
+
+**On a phone** the layout follows the screen: upright, the actions sit under the
+canvas and the inspector is a sheet you drag up; sideways, the inspector moves
+beside the canvas. Everything that does not fit waits behind a **⋮** button.
+
 ## What to try
 
 - **Orange halo = live redex**: an active pair, two principals joined by a wire

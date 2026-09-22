@@ -3,7 +3,7 @@
   "name": "interactioncombinators",
   "display_name": "Interaction Combinators",
   "kind": "application",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "MIT",
   "repository": "https://github.com/migriv24/InteractionCombinators",
   "description": "Lafont's interaction combinators on a Void Maiz canvas: every gesture and every rewrite is a dispatched, logged, undoable Void Core command, and two people can reduce one net at once.",
@@ -16,7 +16,7 @@
       "sibling": "../VoidMaiz",
       "cmake_var": "VOIDMAIZ_ROOT",
       "link": "static",
-      "note": "the canvas, gestures, inspector, the reduce executor and the collaboration layer. Void Maiz in turn locates Void Core (../VoidCore) and Void Allomone (../VoidAllomone)."
+      "note": "the canvas, gestures, inspector, the reduce executor, the collaboration layer, the phone layout kit and the update client. Void Maiz in turn locates Void Core (../VoidCore) and Void Allomone (../VoidAllomone)."
     },
     {
       "name": "voidpalabra",
@@ -26,12 +26,35 @@
       "cmake_var": "VOIDPALABRA_ROOT",
       "link": "static",
       "optional": true,
-      "note": "sync. Present: the desktop build gains Host/Join and the two-window duo bench. Absent: the app builds solo, exactly as before."
+      "note": "sync. Present: the desktop build gains Host/Join and the two-window duo bench. Absent: the app builds solo."
     }
   ],
 
-  "platforms": {
-    "windows-x64": "shipped",
-    "android-arm64": "shipped (solo; collaboration needs a LAN transport, not yet built)"
+  "platforms": ["windows-x64", "android-arm64"],
+  "platforms_note": "A SHIPPING RECORD, as Void Maiz and Void Hormiga use the field: both were built and handed to a person (0.2.0, 2026-09-21; the author ran the APK on a phone). The Windows build is a portable .zip and the Android build an .apk, not the setup.exe / .tar.gz that `mago feed` names today, so tools/package_release.ps1 fills in the artifact names and hashes after Mago writes the document (asked of Void Mago 2026-09-21).",
+
+  "release": {
+    "version": "0.3.0",
+    "previous": "0.2.0",
+    "change": "compatible",
+    "date": "2026-09-22",
+    "summary": "the phone layout fits the screen and turns with it, and the app can update itself",
+    "adds": [
+      "On a phone: every action fits the screen, and what does not fit waits behind a '...' button instead of falling off the edge",
+      "Turn the phone sideways and the inspector moves beside the canvas; upright, it lives in a sheet you drag up from the bottom",
+      "On a phone the whole net is framed when it first appears, and again every time you rotate",
+      "Updates: the app asks once whether to check for new versions when it starts, shows what a new version changes, and installs it only when you choose to",
+      "View > Check for updates, and an Updates section in Settings"
+    ],
+    "behavior_changes": [
+      {
+        "what": "On a phone, the menus moved behind the '...' button at the top right, and the log pane is gone (errors still appear as messages)",
+        "who_is_affected": "anyone used to the 0.2.0 phone layout"
+      },
+      {
+        "what": "On a phone, the camera is reset to frame the whole net when the app opens and whenever the phone is rotated",
+        "who_is_affected": "phone users who expect the view to stay where they left it"
+      }
+    ]
   }
 }

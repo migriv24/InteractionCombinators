@@ -8,10 +8,29 @@
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
 
+#include "voidmaiz/widgets.hpp" // apply_touch_metrics
+
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 
-int main() {
+/* --phone / --phone-landscape: a PREVIEW of the Android layout on the desktop.
+ * A 360 x 740 dp phone (the common size) at scale 2, touch mode on, and the
+ * same apply_touch_metrics call the Android shell makes, so the layout code the
+ * APK runs is the layout code on screen. The input is still a mouse, which is
+ * why it is a preview and not a test of touch. */
+int main(int argc, char** argv) {
+    int phone = 0; // 0 = desktop, 1 = portrait, 2 = landscape
+    for (int i = 1; i < argc; ++i) {
+        if (!std::strcmp(argv[i], "--phone")) phone = 1;
+        if (!std::strcmp(argv[i], "--phone-landscape")) phone = 2;
+    }
+    const float phone_scale = 2.0f;
+    int win_w = 1360, win_h = 800;
+    if (phone) {
+        win_w = (int)((phone == 1 ? 360 : 740) * phone_scale);
+        win_h = (int)((phone == 1 ? 740 : 360) * phone_scale);
+    }
     glfwSetErrorCallback([](int code, const char* desc) {
         std::fprintf(stderr, "glfw error %d: %s\n", code, desc);
     });
@@ -19,7 +38,7 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
     GLFWwindow* window =
-        glfwCreateWindow(1360, 800, "Interaction Combinators — Void Maiz", nullptr, nullptr);
+        glfwCreateWindow(win_w, win_h, "Interaction Combinators — Void Maiz", nullptr, nullptr);
     if (!window) { glfwTerminate(); return 1; }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
@@ -30,7 +49,15 @@ int main() {
     ImGui_ImplOpenGL3_Init("#version 130");
 
     CombinatorsApp app;
+    if (phone) {
+        maiz::apply_touch_metrics(phone_scale);
+        app.touch_mode = true;
+        app.ui_scale = phone_scale;
+    }
     app.base_dir = std::filesystem::current_path();
+    // the folder this executable runs from: an update unpacks BESIDE it
+    std::error_code ec;
+    app.install_dir = std::filesystem::weakly_canonical(std::filesystem::absolute(argv[0]), ec).parent_path();
     app.on_title = [&](const std::string& t) { glfwSetWindowTitle(window, t.c_str()); };
     app.on_quit = [&] { glfwSetWindowShouldClose(window, 1); };
     app.init();

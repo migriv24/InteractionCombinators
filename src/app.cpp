@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <sstream>
@@ -680,6 +681,48 @@ void CombinatorsApp::touch_zoom(float factor, float focal_sx, float focal_sy) {
     ed.last_zoom_time = ImGui::GetTime();
 }
 
+// ── updating itself ──────────────────────────────────────────────────────────
+
+/* Who this app is to the update feed Void Mago writes, and where its answer to
+ * "may I check?" lives: per machine, outside every project, so it survives the
+ * update it was given for (never in the document: config rides the document). */
+void CombinatorsApp::init_updates() {
+    if (!updates_enabled) return;
+    maiz::update::AppIdentity self;
+    self.app = "interactioncombinators";
+    self.display = "Interaction Combinators";
+    self.version = IC_VERSION;
+    self.feed_url =
+        "https://github.com/migriv24/InteractionCombinators/releases/latest/download/void-updates.json";
+    self.install_dir = install_dir;
+#ifdef _WIN32
+    self.executable = "interaction_combinators.exe";
+#else
+    self.executable = "interaction_combinators";
+#endif
+    fs::path dir = prefs_dir;
+    if (dir.empty()) {
+        if (android_activity) {
+            dir = base_dir / "updates"; // internal storage survives an APK update
+        } else {
+#ifdef _WIN32
+            const char* base = std::getenv("LOCALAPPDATA");
+            dir = fs::path(base ? base : ".") / "InteractionCombinators";
+#else
+            const char* base = std::getenv("XDG_CONFIG_HOME");
+            const char* home = std::getenv("HOME");
+            dir = base ? fs::path(base) / "interactioncombinators"
+                       : fs::path(home ? home : ".") / ".config" / "interactioncombinators";
+#endif
+        }
+    }
+    self.prefs_dir = dir;
+    maiz::update::Http http = android_activity ? maiz::update::android_http(android_activity)
+                                               : maiz::update::curl_http();
+    updater = std::make_unique<maiz::update::Updater>(self, http);
+    updater->start_up(); // checks ONLY if the person already chose that
+}
+
 // ── boot ─────────────────────────────────────────────────────────────────────
 
 void CombinatorsApp::init() {
@@ -712,6 +755,7 @@ void CombinatorsApp::init() {
     read_view_config();
     reproject();
     if (role != Role::Join) upgrade_wires(); // the starter is written with plain links
+    init_updates();
     net_status = "solo";
 #ifdef IC_NET
     if (role != Role::Solo) {
@@ -891,6 +935,206 @@ CombinatorsApp::Probe CombinatorsApp::probe() const {
     return p;
 }
 
+void CombinatorsApp::draw_menus() {
+    if (ImGui::BeginMenu("File")) {
+        if (ImGui::MenuItem("New project")) new_project();
+        if (ImGui::MenuItem("Open project…")) want_open = true;
+        if (ImGui::BeginMenu("Recent projects", !recents.empty())) {
+            for (const auto& r : recents)
+                if (ImGui::MenuItem(fs::path(r).stem().string().c_str())) {
+                    load_project(r);
+                    break; // recents just changed; the copy is stale
+                }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save", touch_mode ? nullptr : "Ctrl+S")) do_save();
+        if (ImGui::MenuItem("Save as…")) want_save_as = true;
+        if (on_quit) {
+            ImGui::Separator();
+            if (ImGui::MenuItem("Quit")) on_quit();
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Edit")) {
+        if (ImGui::MenuItem("Undo", touch_mode ? nullptr : "Ctrl+Z", false,
+                            undo_depth > 0))
+            dispatch_and_reproject("undo");
+        if (ImGui::MenuItem("Redo", touch_mode ? nullptr : "Ctrl+Y"))
+            dispatch_and_reproject("redo");
+        ImGui::Separator();
+        if (ImGui::MenuItem("Clean view")) {
+            std::string cmd = maiz::compile_clean(scene, 96.0f, 96.0f);
+            if (!cmd.empty()) dispatch_and_reproject(cmd);
+        }
+        if (ImGui::MenuItem("Relax layout")) {
+            std::string cmd = maiz::compile_relax(scene);
+            if (!cmd.empty()) dispatch_and_reproject(cmd);
+        }
+        if (ImGui::MenuItem("Live physics", nullptr, physics_on)) {
+            physics_on = !physics_on;
+            if (!physics_on) flush_physics(); // leaving: land the picture
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Selection")) {
+        if (ImGui::MenuItem("Select all")) {
+            ed.selection.clear();
+            for (const auto& n : scene.nodes) ed.selection.push_back(n.name);
+        }
+        if (ImGui::MenuItem("Select none", nullptr, false, !ed.selection.empty()))
+            ed.selection.clear();
+        if (ImGui::MenuItem("Invert selection")) {
+            std::vector<std::string> inv;
+            for (const auto& n : scene.nodes)
+                if (!ed.selected(n.name)) inv.push_back(n.name);
+            ed.selection = inv;
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Delete selection", touch_mode ? nullptr : "Del", false,
+                            !ed.selection.empty())) {
+            dispatch_and_reproject(maiz::compile_deletes(ed.selection));
+            ed.selection.clear();
+        }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Add")) {
+        // touch has no Shift+A and no right-click: minting from the menu
+        // lands the node at the center of the visible canvas
+        for (const auto& entry : palette.entries)
+            if (ImGui::MenuItem(entry.label.c_str())) {
+                float wx = ed.cam.x + canvas_w_px * 0.5f / ed.cam.zoom;
+                float wy = ed.cam.y + canvas_h_px * 0.5f / ed.cam.zoom;
+                dispatch_and_reproject(maiz::compile_add(
+                    entry.glyph, maiz::unique_name(scene, entry.glyph), wx, wy));
+            }
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("View")) {
+        if (ImGui::MenuItem("Light theme", nullptr, light_mode)) {
+            light_mode = !light_mode;
+            apply_theme();
+        }
+        if (ImGui::MenuItem("Reset camera")) {
+            ed.cam = {-10, -10, 1.0f};
+            dispatch_and_reproject(maiz::compile_camera(ed.cam));
+        }
+        ImGui::Separator();
+        if (updater && ImGui::MenuItem("Check for updates…"))
+            maiz::open_update_prompt(*updater, update_view, true);
+        if (ImGui::MenuItem("Settings…")) want_settings = true;
+        ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Net")) {
+        if (ImGui::MenuItem("Step", touch_mode ? nullptr : "Space", false,
+                            active_count > 0))
+            try_step();
+        if (ImGui::MenuItem("Reduce all", nullptr, false, active_count > 0))
+            auto_reduce = true;
+        if (ImGui::MenuItem("Stop reducing", nullptr, false, auto_reduce))
+            auto_reduce = false;
+        if (!touch_mode) {
+            ImGui::Separator();
+            ImGui::MenuItem("Space fires the hovered pair, else a random one",
+                            nullptr, false, false);
+        }
+        ImGui::EndMenu();
+    }
+}
+
+/* Frame the whole net in the canvas pane. A phone does this when the canvas
+ * first appears and every time it is rotated: a fixed starting camera left half
+ * the starter net off the edge of an upright phone, and a rotation would strand
+ * the view wherever it happened to be. It is an ordinary camera change, logged
+ * through the config tier like a pinch. */
+void CombinatorsApp::fit_camera() {
+    if (scene.nodes.empty() || canvas_w_px < 10 || canvas_h_px < 10) return;
+    float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+    for (const auto& n : scene.nodes) {
+        float w = n.w > 0 ? n.w : 84.0f, h = n.h > 0 ? n.h : 84.0f;
+        x0 = std::min(x0, n.x);
+        y0 = std::min(y0, n.y);
+        x1 = std::max(x1, n.x + w);
+        y1 = std::max(y1, n.y + h + 18.0f); // the tag label under a body
+    }
+    const float margin = 24.0f;
+    x0 -= margin; y0 -= margin; x1 += margin; y1 += margin;
+    float zoom = std::min(canvas_w_px / (x1 - x0), canvas_h_px / (y1 - y0));
+    zoom = std::clamp(zoom, canvas_style.min_zoom, std::min(canvas_style.max_zoom, 1.6f));
+    ed.cam.zoom = zoom;
+    ed.cam.x = x0 - (canvas_w_px / zoom - (x1 - x0)) * 0.5f;
+    ed.cam.y = y0 - (canvas_h_px / zoom - (y1 - y0)) * 0.5f;
+    ed.cam_dirty = true;
+    ed.last_zoom_time = ImGui::GetTime(); // the idle flush logs it
+}
+
+void CombinatorsApp::draw_identity() {
+    if (role == Role::Solo) return;
+    // the dot is drawn, not typed: the bundled font has no U+25CF
+    ImVec4 col(((profile_rgb >> 16) & 255) / 255.0f, ((profile_rgb >> 8) & 255) / 255.0f,
+               (profile_rgb & 255) / 255.0f, 1.0f);
+    float r = ImGui::GetTextLineHeight() * 0.32f;
+    ImVec2 at = ImGui::GetCursorScreenPos();
+    float cy = at.y + ImGui::GetFrameHeight() * 0.5f;
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(at.x + r, cy), r,
+                                                ImGui::ColorConvertFloat4ToU32(col));
+    ImGui::Dummy(ImVec2(r * 2.0f, ImGui::GetFrameHeight()));
+    ImGui::SameLine(0, 4);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(col, "%s", profile_name.c_str());
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", net_status.c_str());
+}
+
+/* One action bar for both substrates. It fits the width it is given and puts
+ * the rest behind "more", most important kept visible (maiz::action_bar), so a
+ * phone upright, a phone sideways and a half-width duo window all get every
+ * action, none of them clipped off the edge (the 0.2.0 APK's bug). */
+void CombinatorsApp::draw_actions(float width) {
+    bool can_step = active_count > 0;
+    enum { Step, Reduce, Undo, Redo, Add, Delete, Clean, Relax };
+    std::vector<maiz::BarAction> acts = {
+        {"step", 0, can_step, false, true},
+        {auto_reduce ? "stop" : "reduce all", 3, can_step || auto_reduce},
+        {"undo", 1, undo_depth > 0},
+        {"redo", 2, true},
+        {"add", 4, true},
+        {"delete", 5, !ed.selection.empty()},
+        {"clean", 6, true},
+        {"relax", 7, true},
+    };
+    switch (maiz::action_bar("actions", acts, touch_mode, width)) {
+    case Step: try_step(); break;
+    case Reduce: auto_reduce = !auto_reduce; break;
+    case Undo: dispatch_and_reproject("undo"); break;
+    case Redo: dispatch_and_reproject("redo"); break;
+    case Add: ImGui::OpenPopup("##add-agent"); break;
+    case Delete:
+        dispatch_and_reproject(maiz::compile_deletes(ed.selection));
+        ed.selection.clear();
+        break;
+    case Clean:
+        if (std::string cmd = maiz::compile_clean(scene, 96.0f, 96.0f); !cmd.empty())
+            dispatch_and_reproject(cmd);
+        break;
+    case Relax:
+        if (std::string cmd = maiz::compile_relax(scene); !cmd.empty()) dispatch_and_reproject(cmd);
+        break;
+    default: break;
+    }
+    // add: mint at the centre of the visible canvas (a phone has no Shift+A)
+    if (ImGui::BeginPopup("##add-agent")) {
+        for (const auto& entry : palette.entries)
+            if (ImGui::MenuItem(entry.label.c_str())) {
+                float wx = ed.cam.x + canvas_w_px * 0.5f / ed.cam.zoom;
+                float wy = ed.cam.y + canvas_h_px * 0.5f / ed.cam.zoom;
+                dispatch_and_reproject(maiz::compile_add(
+                    entry.glyph, maiz::unique_name(scene, entry.glyph), wx, wy));
+            }
+        ImGui::EndPopup();
+    }
+}
+
 // ── one frame ────────────────────────────────────────────────────────────────
 
 void CombinatorsApp::frame() {
@@ -923,109 +1167,8 @@ void CombinatorsApp::frame() {
     }
 
     // ── the menu ribbon: every model-touching entry is a command ────────────
-    if (ImGui::BeginMainMenuBar()) {
-        if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New project")) new_project();
-            if (ImGui::MenuItem("Open project…")) want_open = true;
-            if (ImGui::BeginMenu("Recent projects", !recents.empty())) {
-                for (const auto& r : recents)
-                    if (ImGui::MenuItem(fs::path(r).stem().string().c_str())) {
-                        load_project(r);
-                        break; // recents just changed; the copy is stale
-                    }
-                ImGui::EndMenu();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Save", touch_mode ? nullptr : "Ctrl+S")) do_save();
-            if (ImGui::MenuItem("Save as…")) want_save_as = true;
-            if (on_quit) {
-                ImGui::Separator();
-                if (ImGui::MenuItem("Quit")) on_quit();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Edit")) {
-            if (ImGui::MenuItem("Undo", touch_mode ? nullptr : "Ctrl+Z", false,
-                                undo_depth > 0))
-                dispatch_and_reproject("undo");
-            if (ImGui::MenuItem("Redo", touch_mode ? nullptr : "Ctrl+Y"))
-                dispatch_and_reproject("redo");
-            ImGui::Separator();
-            if (ImGui::MenuItem("Clean view")) {
-                std::string cmd = maiz::compile_clean(scene, 96.0f, 96.0f);
-                if (!cmd.empty()) dispatch_and_reproject(cmd);
-            }
-            if (ImGui::MenuItem("Relax layout")) {
-                std::string cmd = maiz::compile_relax(scene);
-                if (!cmd.empty()) dispatch_and_reproject(cmd);
-            }
-            if (ImGui::MenuItem("Live physics", nullptr, physics_on)) {
-                physics_on = !physics_on;
-                if (!physics_on) flush_physics(); // leaving: land the picture
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Selection")) {
-            if (ImGui::MenuItem("Select all")) {
-                ed.selection.clear();
-                for (const auto& n : scene.nodes) ed.selection.push_back(n.name);
-            }
-            if (ImGui::MenuItem("Select none", nullptr, false, !ed.selection.empty()))
-                ed.selection.clear();
-            if (ImGui::MenuItem("Invert selection")) {
-                std::vector<std::string> inv;
-                for (const auto& n : scene.nodes)
-                    if (!ed.selected(n.name)) inv.push_back(n.name);
-                ed.selection = inv;
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Delete selection", touch_mode ? nullptr : "Del", false,
-                                !ed.selection.empty())) {
-                dispatch_and_reproject(maiz::compile_deletes(ed.selection));
-                ed.selection.clear();
-            }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Add")) {
-            // touch has no Shift+A and no right-click: minting from the menu
-            // lands the node at the center of the visible canvas
-            for (const auto& entry : palette.entries)
-                if (ImGui::MenuItem(entry.label.c_str())) {
-                    float wx = ed.cam.x + canvas_w_px * 0.5f / ed.cam.zoom;
-                    float wy = ed.cam.y + canvas_h_px * 0.5f / ed.cam.zoom;
-                    dispatch_and_reproject(maiz::compile_add(
-                        entry.glyph, maiz::unique_name(scene, entry.glyph), wx, wy));
-                }
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("View")) {
-            if (ImGui::MenuItem("Light theme", nullptr, light_mode)) {
-                light_mode = !light_mode;
-                apply_theme();
-            }
-            if (ImGui::MenuItem("Reset camera")) {
-                ed.cam = {-10, -10, 1.0f};
-                dispatch_and_reproject(maiz::compile_camera(ed.cam));
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Settings…")) want_settings = true;
-            ImGui::EndMenu();
-        }
-        if (ImGui::BeginMenu("Net")) {
-            if (ImGui::MenuItem("Step", touch_mode ? nullptr : "Space", false,
-                                active_count > 0))
-                try_step();
-            if (ImGui::MenuItem("Reduce all", nullptr, false, active_count > 0))
-                auto_reduce = true;
-            if (ImGui::MenuItem("Stop reducing", nullptr, false, auto_reduce))
-                auto_reduce = false;
-            if (!touch_mode) {
-                ImGui::Separator();
-                ImGui::MenuItem("Space fires the hovered pair, else a random one",
-                                nullptr, false, false);
-            }
-            ImGui::EndMenu();
-        }
+    if (!touch_mode && ImGui::BeginMainMenuBar()) { // a phone keeps these behind ⋮
+        draw_menus();
         ImGui::EndMainMenuBar();
     }
     if (io.KeyCtrl && !io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_S, false))
@@ -1042,72 +1185,65 @@ void CombinatorsApp::frame() {
                      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus);
     ImVec2 area = ImGui::GetContentRegionAvail();
     const float th = touch_mode ? 14.0f : 6.0f; // splitters need finger width
-    // touch (portrait): canvas over inspector, full width, no log pane (the
-    // transcript still records; errors toast). Desktop: the three-pane layout.
+    /* Three arrangements, decided in dp (maiz::classify_layout), never by the
+     * device name:
+     *   desktop           canvas | inspector, log + command bar below (splitters)
+     *   phone, upright    app bar, canvas, action bar; the inspector in a sheet
+     *   phone, sideways   app bar, canvas + action bar | inspector at the side
+     * The phone has no log pane: the transcript still records, errors toast. */
+    const maiz::LayoutClass lc =
+        maiz::classify_layout(vp->WorkSize.x, vp->WorkSize.y, ui_scale, touch_mode);
+    const bool side_panel = touch_mode && lc.orientation == maiz::Orientation::Landscape;
+    const float bar_h = ImGui::GetFrameHeightWithSpacing();
     float top_h, canvas_w;
     if (touch_mode) {
-        canvas_w = area.x;
-        top_h = std::max(160.0f, (area.y - th) * canvas_frac);
+        // the app bar: who (in a session) or what, the pair count, and ⋮
+        ImGui::AlignTextToFramePadding();
+        if (role != Role::Solo) {
+            draw_identity();
+        } else {
+            ImGui::TextUnformatted("Combinators");
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%d pairs", active_count);
+        if (updater && updater->stage() >= maiz::update::Updater::Stage::Offered &&
+            updater->stage() <= maiz::update::Updater::Stage::Ready) {
+            ImGui::SameLine();
+            maiz::update_badge(*updater, update_view, true);
+        }
+        float dw = maiz::dots_button_width(true);
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - dw));
+        if (maiz::begin_overflow_menu("app-menu", true)) {
+            draw_menus();
+            maiz::end_overflow_menu();
+        }
+        area = ImGui::GetContentRegionAvail();
+        // upright, the sheet's peeking header takes the bottom of the screen
+        float peek = side_panel ? 0.0f : vp->WorkSize.y * sheet.detents[0];
+        canvas_w = side_panel ? std::floor(area.x * 0.62f) : area.x;
+        top_h = std::max(120.0f, area.y - bar_h - peek);
     } else {
         top_h = std::max(64.0f, (area.y - th) * log_frac);
         canvas_w = std::max(120.0f, (area.x - th) * canvas_frac);
     }
 
-    auto tbutton = [&](const char* label) { return maiz::tool_button(label, touch_mode); };
-
-    ImGui::BeginChild("canvas-pane", ImVec2(touch_mode ? 0.0f : canvas_w, top_h),
-                      ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar);
-    if (!touch_mode) { // the status readout is dev chrome; phones skip it
+    if (side_panel) ImGui::BeginGroup(); // canvas over action bar, beside the inspector
+    ImGui::BeginChild("canvas-pane", ImVec2(canvas_w, top_h), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_NoScrollbar);
+    if (!touch_mode) {
+        // the status readout is dev chrome; the actions fit the pane's width
         ImGui::Text("mantle: %s   agents: %d   pairs: %d   undo: %d", scene.mantle.c_str(),
                     (int)scene.nodes.size(), active_count, undo_depth);
-        ImGui::SameLine(0, 20);
-    }
-    if (role != Role::Solo) {
-        // the dot is drawn, not typed: the bundled font has no U+25CF
-        ImVec4 col(((profile_rgb >> 16) & 255) / 255.0f, ((profile_rgb >> 8) & 255) / 255.0f,
-                   (profile_rgb & 255) / 255.0f, 1.0f);
-        float r = ImGui::GetTextLineHeight() * 0.32f;
-        ImVec2 at = ImGui::GetCursorScreenPos();
-        ImGui::GetWindowDrawList()->AddCircleFilled(
-            ImVec2(at.x + r, at.y + ImGui::GetTextLineHeight() * 0.5f), r,
-            ImGui::ColorConvertFloat4ToU32(col));
-        ImGui::Dummy(ImVec2(r * 2.0f, ImGui::GetTextLineHeight()));
-        ImGui::SameLine(0, 4);
-        ImGui::TextColored(col, "%s", profile_name.c_str());
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", net_status.c_str());
-        ImGui::SameLine(0, 20);
-    }
-    bool can_step = active_count > 0;
-    if (!can_step) ImGui::BeginDisabled();
-    if (tbutton("step")) try_step();
-    ImGui::SameLine();
-    if (!auto_reduce) {
-        if (tbutton("reduce all")) auto_reduce = true;
-    } else {
-        if (tbutton("stop")) auto_reduce = false;
-    }
-    if (!can_step) ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (tbutton("clean")) {
-        std::string cmd = maiz::compile_clean(scene, 96.0f, 96.0f);
-        if (!cmd.empty()) dispatch_and_reproject(cmd);
-    }
-    ImGui::SameLine();
-    if (tbutton("relax")) {
-        std::string cmd = maiz::compile_relax(scene);
-        if (!cmd.empty()) dispatch_and_reproject(cmd);
-    }
-    ImGui::SameLine();
-    if (tbutton("undo")) dispatch_and_reproject("undo");
-    ImGui::SameLine();
-    if (tbutton("redo")) dispatch_and_reproject("redo");
-    if (touch_mode) {
-        ImGui::SameLine(0, 16);
-        ImGui::TextDisabled("%d pairs", active_count);
-    } else {
-        ImGui::SameLine(0, 20);
-        ImGui::TextDisabled("Space: fire hovered/random pair | right-click a glowing wire");
+        if (role != Role::Solo) {
+            ImGui::SameLine(0, 20);
+            draw_identity();
+        }
+        if (updater && updater->stage() >= maiz::update::Updater::Stage::Offered &&
+            updater->stage() <= maiz::update::Updater::Stage::Ready) {
+            ImGui::SameLine(0, 20);
+            maiz::update_badge(*updater, update_view, false);
+        }
+        draw_actions(0.0f);
     }
 
     // errors must still reach the eye with the log hidden: a transient toast
@@ -1203,6 +1339,13 @@ void CombinatorsApp::frame() {
         canvas_w_px = sz.x;
         canvas_h_px = sz.y;
     }
+    if (touch_mode) {
+        int orientation = canvas_w_px >= canvas_h_px ? 1 : 0;
+        if (orientation != fitted_orientation) {
+            fit_camera();
+            fitted_orientation = orientation;
+        }
+    }
     const maiz::CanvasNet* cnet = nullptr;
 #ifdef IC_NET
     maiz::CanvasNet canvas_net;
@@ -1284,18 +1427,26 @@ void CombinatorsApp::frame() {
 
     bool layout_changed = false;
     if (touch_mode) {
-        // portrait: the inspector sits BELOW the canvas, full width — a side
-        // column is unusable at phone widths
-        auto hs =
-            maiz::splitter("##tsplit", false, canvas_frac, area.y - th, 0.35f, 0.9f, th);
-        layout_changed = hs.released;
-        ImGui::BeginChild("inspector-pane", ImVec2(0, 0));
-        maiz::CanvasIO iio = maiz::draw_inspector(scene, ed);
-        for (const auto& cmd : iio.commands) dispatch_and_reproject(cmd);
-        ImGui::EndChild();
-        if (layout_changed) flush_panels();
+        draw_actions(canvas_w); // the thumb's row, under the canvas
+        if (side_panel) {
+            ImGui::EndGroup();
+            ImGui::SameLine();
+            ImGui::BeginChild("inspector-pane", ImVec2(0, 0), ImGuiChildFlags_Borders);
+            maiz::CanvasIO iio = maiz::draw_inspector(scene, ed);
+            for (const auto& cmd : iio.commands) dispatch_and_reproject(cmd);
+            ImGui::EndChild();
+        }
         ImGui::End();
         ImGui::PopStyleVar();
+        if (!side_panel) {
+            // upright: the inspector lives in a sheet that peeks, drags up, and
+            // does not steal the canvas until asked
+            if (maiz::begin_bottom_sheet("inspector", sheet)) {
+                maiz::CanvasIO iio = maiz::draw_inspector(scene, ed);
+                for (const auto& cmd : iio.commands) dispatch_and_reproject(cmd);
+            }
+            maiz::end_bottom_sheet(sheet);
+        }
         draw_modals();
 #ifdef IC_NET
         net_frame();
@@ -1351,6 +1502,14 @@ void CombinatorsApp::frame() {
 // ── modals: Save As / Open / Settings (both substrates) ─────────────────────
 
 void CombinatorsApp::draw_modals() {
+    if (updater &&
+        maiz::draw_update_modals(*updater, update_view, touch_mode) == maiz::UpdateChoice::Apply) {
+        maiz::update::ApplyResult r =
+            maiz::update::apply(updater->downloaded(), updater->self(), android_activity);
+        update_view.message = r.message;
+        log.push_back({r.ok ? "info" : "error", "update", r.message});
+        if (r.quit_now && on_quit) on_quit(); // the new version is starting beside this one
+    }
     if (want_save_as) {
         ImGui::OpenPopup("Save project as");
         if (!current_path.empty())
@@ -1415,6 +1574,10 @@ void CombinatorsApp::draw_modals() {
             ImGui::SliderFloat("speed", &anim_speed, 0.25f, 3.0f, "%.2fx");
             if (ImGui::IsItemDeactivatedAfterEdit()) flush_anim_cfg();
             if (!anim_on) ImGui::EndDisabled();
+            if (updater) {
+                ImGui::SeparatorText("Updates");
+                maiz::draw_update_settings(*updater, update_view);
+            }
             ImGui::SeparatorText("Layout physics");
             if (ImGui::Checkbox("live physics", &physics_on))
                 if (!physics_on) flush_physics();

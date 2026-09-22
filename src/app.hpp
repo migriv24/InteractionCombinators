@@ -14,6 +14,8 @@
 #include "voidmaiz/canvas.hpp"
 #include "voidmaiz/embed.hpp"
 #include "voidmaiz/gesture.hpp"
+#include "voidmaiz/mobile.hpp"
+#include "voidmaiz/updateview.hpp"
 #include "voidmaiz/reduce.hpp"
 #include "voidmaiz/widgets.hpp"
 #include "voidmaiz/wires.hpp"
@@ -37,6 +39,16 @@ struct CombinatorsApp {
     std::function<void(const std::string&)> on_title; // window title (optional)
     std::function<void()> on_quit;                    // File > Quit (optional)
     bool touch_mode = false; // mobile: fat-finger hit targets, no keyboard hints
+    /* The shell's density scale (the Android shell: dpi/160 x 1.3). The layout is
+     * decided in dp = px / ui_scale, so a 1080-px phone is laid out as the
+     * ~317-dp screen it is (maiz::classify_layout). 1 on the desktop. */
+    float ui_scale = 1.0f;
+
+    // ── updating itself (VoidMaiz okf/concepts/updates.md) ───────────────────
+    bool updates_enabled = true;            // the duo bench turns it off: a test rig
+    std::filesystem::path install_dir;      // the running copy's folder (desktop shell)
+    std::filesystem::path prefs_dir;        // per machine; default: the platform's app-data folder
+    struct ANativeActivity* android_activity = nullptr; // the Android shell's, for JNI
 
     // ── collaboration (VoidMaiz okf/concepts/collaborative-canvas.md) ─────────
     // Set before init. Solo is the app as it always was. HOST shares the net it
@@ -193,6 +205,15 @@ private:
     void do_save();
     bool try_step(const std::string& a = {}, const std::string& b = {});
     void draw_modals();
+    void draw_menus();          // the menu content: a desktop menu bar, a phone's ⋮ menu
+    void draw_identity();       // the session's colour dot, name and status
+    void draw_actions(float width); // the action bar (step, undo, …), fitted to width
+    maiz::BottomSheetState sheet;   // the inspector, on a phone held upright
+    std::unique_ptr<maiz::update::Updater> updater;
+    maiz::UpdateViewState update_view;
+    void init_updates();
+    void fit_camera();              // frame the whole net in the canvas pane
+    int fitted_orientation = -1;    // a phone refits when it is rotated
     std::filesystem::path projects_dir();
     std::filesystem::path recents_file();
     void push_recent(const std::string& path);
