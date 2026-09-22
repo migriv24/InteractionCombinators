@@ -682,6 +682,56 @@ void CombinatorsApp::touch_zoom(float factor, float focal_sx, float focal_sy) {
     ed.last_zoom_time = ImGui::GetTime();
 }
 
+/* Where this MACHINE's answers live: the profile, and whether to check for
+ * updates. Never the document: a preference that rode the document would travel
+ * to another device on the next merge. */
+fs::path CombinatorsApp::settings_dir() {
+    if (!prefs_dir.empty()) return prefs_dir;
+    if (android_activity) return base_dir / "settings"; // internal storage survives an update
+#ifdef _WIN32
+    const char* base = std::getenv("LOCALAPPDATA");
+    return fs::path(base ? base : ".") / "InteractionCombinators";
+#else
+    const char* base = std::getenv("XDG_CONFIG_HOME");
+    const char* home = std::getenv("HOME");
+    return base ? fs::path(base) / "interactioncombinators"
+                : fs::path(home ? home : ".") / ".config" / "interactioncombinators";
+#endif
+}
+
+/* The profile is a name and a colour, remembered per machine (the author:
+ * "a very basic profile thing"). It is who this device is on every net. */
+void CombinatorsApp::load_profile_once() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    maiz::Profile p = maiz::load_profile(settings_dir());
+    if (profile_name.empty() || profile_name == "lafont") profile_name = p.name;
+    profile_rgb = p.rgb;
+    core.dispatch("config set actor " + maiz::arg("human:" + profile_name));
+}
+
+/* A net IS a mantle, so naming the net renames the mantle. The host does it;
+ * joiners adopt whatever name arrives. */
+void CombinatorsApp::rename_net(const std::string& name) {
+    std::string clean;
+    for (char ch : name) {
+        if (std::isalnum((unsigned char)ch)) clean += (char)std::tolower((unsigned char)ch);
+        else if ((ch == ' ' || ch == '-' || ch == '_') && !clean.empty() && clean.back() != '-') clean += '-';
+    }
+    while (!clean.empty() && clean.back() == '-') clean.pop_back();
+    if (clean.empty() || clean == scene.mantle) return;
+    maiz::Result r = dispatch_and_reproject("mantle rename " + maiz::arg(scene.mantle) + " " + maiz::arg(clean));
+    if (!r.ok) {
+        log.push_back({"error", "net", "could not rename the net: " + r.text()});
+        return;
+    }
+#ifdef IC_NET
+    if (lan) lan->set_net(clean);
+#endif
+    std::snprintf(net_name_buf, sizeof net_name_buf, "%s", clean.c_str());
+}
+
 // ── updating itself ──────────────────────────────────────────────────────────
 
 /* Who this app is to the update feed Void Mago writes, and where its answer to
@@ -701,23 +751,7 @@ void CombinatorsApp::init_updates() {
 #else
     self.executable = "interaction_combinators";
 #endif
-    fs::path dir = prefs_dir;
-    if (dir.empty()) {
-        if (android_activity) {
-            dir = base_dir / "updates"; // internal storage survives an APK update
-        } else {
-#ifdef _WIN32
-            const char* base = std::getenv("LOCALAPPDATA");
-            dir = fs::path(base ? base : ".") / "InteractionCombinators";
-#else
-            const char* base = std::getenv("XDG_CONFIG_HOME");
-            const char* home = std::getenv("HOME");
-            dir = base ? fs::path(base) / "interactioncombinators"
-                       : fs::path(home ? home : ".") / ".config" / "interactioncombinators";
-#endif
-        }
-    }
-    self.prefs_dir = dir;
+    self.prefs_dir = settings_dir();
     maiz::update::Http http = android_activity ? maiz::update::android_http(android_activity)
                                                : maiz::update::curl_http();
     updater = std::make_unique<maiz::update::Updater>(self, http);
@@ -755,6 +789,7 @@ void CombinatorsApp::init() {
     }();
     read_view_config();
     reproject();
+    load_profile_once();
     if (role != Role::Join) upgrade_wires(); // the starter is written with plain links
     init_updates();
     net_status = "solo";
@@ -795,7 +830,9 @@ bool CombinatorsApp::start_network() {
         std::error_code ec;
         fs::rename(tmp, store, ec);
     };
-    o.timing.coalesce = 100; // "reduce all" emits a step per frame
+    o.timing.coalesce = 100;   // "reduce all" emits a step per frame
+    o.timing.keepalive = 4000; // say something often: the LAN layer calls a
+                               // link with 12 s of silence dead (lanlink.hpp)
     net = std::make_unique<maiz::Network>(core, std::move(r), std::move(o));
     net->settings().self.name = profile_name;
     net->settings().self.rgb = profile_rgb;
@@ -810,14 +847,8 @@ bool CombinatorsApp::start_network() {
 void CombinatorsApp::prepare_identity() {
     if (lan_id.empty()) lan_id = "dev-" + random_hex(16);
     if (device_tag.empty()) device_tag = random_hex(3);
-    if (profile_name == "lafont") {
-        const char* n = std::getenv("COMPUTERNAME");
-        if (!n) n = std::getenv("HOSTNAME");
-        profile_name = android_activity ? "Phone-" + device_tag : (n ? std::string(n) : "Desktop-" + device_tag);
-        core.dispatch("config set actor " + maiz::arg("human:" + profile_name));
-    }
-    static const unsigned palette[] = {0x2f9e8f, 0xc2548a, 0x6f5bd6, 0x2b8fd9, 0x8a9b2e, 0xd9822b};
-    if (profile_rgb == 0x4f86d9) profile_rgb = palette[std::hash<std::string>{}(lan_id) % 6];
+    load_profile_once();
+    if (profile_rgb == 0x4f86d9) profile_rgb = maiz::suggested_colour(profile_name);
 }
 
 void CombinatorsApp::lan_share() {
@@ -838,6 +869,12 @@ void CombinatorsApp::lan_share() {
     o.name = profile_name;
     o.rgb = profile_rgb;
     o.host = true;
+    if (scene.mantle == "lafont") { // the starter's default: give it a name people read
+        std::string mine = profile_name;
+        rename_net(mine + "-net");
+    }
+    o.net = scene.mantle;
+    std::snprintf(net_name_buf, sizeof net_name_buf, "%s", scene.mantle.c_str());
     std::string err;
     if (!lan->start(o, &err)) {
         lan_error = "could not open the network: " + err;
@@ -899,6 +936,10 @@ void CombinatorsApp::lan_join(maiz::lan::Ipv4 addr, std::uint16_t port, const st
         lan_error = err;
         return;
     }
+    last_host_addr = addr; // so a phone that slept comes back by itself
+    last_host_port = port;
+    retry_delay_ms = 2000;
+    next_retry_ms = 0;
     lan_host_name = name;
     log.push_back({"info", "lan", "asking " + name + " (" + addr.text() + ") to let us join"});
 }
@@ -916,6 +957,8 @@ void CombinatorsApp::lan_leave() {
     net_status = "solo";
     lan_host_name.clear();
     lan_error.clear();
+    last_host_port = 0;
+    reconnecting = false;
     log.push_back({"info", "lan", "left the LAN; the net stays here"});
 }
 
@@ -932,7 +975,39 @@ void CombinatorsApp::lan_frame() {
     }
     if (net)
         for (auto& f : lan->take_frames()) net->receive(f.link, f.frame, now);
+    // a joiner that lost its link comes back on its own, with a backoff. The
+    // phone sleeping, Wi-Fi handing over and a closed lid all look like this.
+    if (role == Role::Join && lan->running() && last_host_port && lan->connected() == 0) {
+        reconnecting = true;
+        if (now >= next_retry_ms) {
+            std::string err;
+            lan->join(last_host_addr, last_host_port, &err);
+            next_retry_ms = now + retry_delay_ms;
+            retry_delay_ms = std::min<long long>(retry_delay_ms * 2, 8000);
+        }
+        net_status = "reconnecting to " + lan_host_name + "...";
+    } else if (reconnecting && lan->connected() > 0) {
+        reconnecting = false;
+        retry_delay_ms = 2000;
+        log.push_back({"info", "lan", "back with " + lan_host_name});
+    }
     if (lan->hosting() && !lan->requests().empty()) lan_open = true; // someone is knocking
+    // test-only: build the shapes the author reported on (an ordinary wire, a
+    // constructor wired to itself, a vicious circle), once, after the joiner is in
+    if (test_wire_at > 0 && ImGui::GetTime() > test_wire_at) {
+        test_wire_at = 0;
+        maiz::WireEncoding enc;
+        auto w = [&](const char* an, int ap, const char* bn, int bp) {
+            dispatch_and_reproject(maiz::compile_wire(enc, fresh_wire(), {an, ap}, {bn, bp}));
+        };
+        for (const char* n : {"c1", "c2", "c3"})
+            dispatch_and_reproject(std::string("rune new gamma ") + n);
+        w("c1", 1, "c2", 1); // ordinary
+        w("c3", 1, "c3", 2); // a constructor wired to ITSELF
+        w("c1", 0, "c2", 2); // a vicious circle, principal into aux
+        w("c2", 0, "c3", 0);
+        log.push_back({"info", "test", "wired the demo net"});
+    }
     if (test_auto_allow && lan->hosting())
         for (const auto& r : lan->requests()) lan->allow(r.token);
     if (test_lan == "join" && role != Role::Join)
@@ -941,6 +1016,27 @@ void CombinatorsApp::lan_frame() {
                 lan_join(p.addr, p.port, p.name);
                 break;
             }
+}
+
+/* What this device actually holds, and a way out when two screens disagree.
+ * The author saw wiring that had not arrived (2026-09-22) and had no way to tell
+ * a stale link from a lost change; these two lines and one button are that way. */
+void CombinatorsApp::draw_net_health() {
+    int wires = 0;
+    for (const auto& w : scene.wires) wires += w.contested ? 0 : 1;
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("this device: %d agents, %d wires, %d pairs", (int)scene.nodes.size(),
+                       wires, active_count);
+    if (net) {
+        std::size_t q = net->conflicts().size() + net->anomalies().size();
+        ImGui::TextWrapped("%zu question(s) from merges; %zu change(s) observed", q,
+                           (std::size_t)net->stats().observed_changes);
+    }
+    ImGui::PopStyleColor();
+    if (net && maiz::tool_button("Resync now", touch_mode)) {
+        net->resync(clock_ms());
+        log.push_back({"info", "lan", "asked every link for the whole net again"});
+    }
 }
 
 void CombinatorsApp::draw_lan_panel() {
@@ -971,7 +1067,15 @@ void CombinatorsApp::draw_lan_panel() {
         if (btn("Join a net")) lan_discover();
         if (best.empty()) dim("This device does not seem to be on a local network right now.");
     } else if (lan->hosting()) {
-        ImGui::TextWrapped("Sharing as %s.", profile_name.c_str());
+        ImGui::TextWrapped("Sharing \"%s\" as %s.", scene.mantle.c_str(), profile_name.c_str());
+        if (!touch_mode) { // naming the net renames its mantle
+            ImGui::SetNextItemWidth(200);
+            if (ImGui::InputText("net name", net_name_buf, sizeof net_name_buf,
+                                 ImGuiInputTextFlags_EnterReturnsTrue))
+                rename_net(net_name_buf);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(enter)");
+        }
         if (!best.empty()) {
             std::string code = maiz::lan::encode_join_code(best[0].address, best[0].netmask, lan->tcp_port(), 47812);
             ImGui::TextWrapped("Others on this Wi-Fi will see you in their list. Or they can join by code:");
@@ -992,10 +1096,12 @@ void CombinatorsApp::draw_lan_panel() {
         }
         ImGui::Separator();
         ImGui::TextWrapped("%d joined. %s", lan->connected(), net_status.c_str());
+        draw_net_health();
         dim("Windows may ask whether to allow network access the first time: allow it on private networks.");
         if (btn("Stop sharing")) lan_leave();
     } else if (role == Role::Join && net) {
         ImGui::TextWrapped("Joined %s. %s", lan_host_name.c_str(), net_status.c_str());
+        draw_net_health();
         if (lan->connected() == 0 && lan_error.empty()) dim("Waiting for the host to allow you...");
         if (btn("Leave")) lan_leave();
     } else {
@@ -1005,7 +1111,7 @@ void CombinatorsApp::draw_lan_panel() {
             if (!p.host) continue;
             ++shown;
             ImGui::PushID(p.id.c_str());
-            std::string label = "Join " + p.name + "  (" + p.addr.text() + ")";
+            std::string label = "Join " + (p.net.empty() ? p.name : p.net) + "  (" + p.name + ")";
             if (btn(label.c_str())) lan_join(p.addr, p.port, p.name);
             ImGui::PopID();
         }
@@ -1095,9 +1201,20 @@ void CombinatorsApp::net_frame() {
     if (net->take_spliced()) {
         maiz::Scene before = scene;
         reproject();
-        if (!adopted && role == Role::Join && core.dispatch("use lafont").ok) {
-            adopted = true;
-            reproject();
+        if (!adopted && role == Role::Join) {
+            // adopt whatever the host calls its net: the mantle IS the net
+            maiz::Result m = core.dispatch("mantles");
+            for (const auto& line : m.lines) {
+                std::string name = line;
+                while (!name.empty() && (name.front() == ' ' || name.front() == '*')) name.erase(0, 1);
+                if (auto sp = name.find_first_of(" \t"); sp != std::string::npos) name.resize(sp);
+                if (!name.empty() && core.dispatch("use " + maiz::arg(name)).ok) {
+                    adopted = true;
+                    lan_host_name = lan_host_name.empty() ? name : lan_host_name;
+                    reproject();
+                    break;
+                }
+            }
         }
         play_remote_change(before);
     }
@@ -1864,6 +1981,54 @@ void CombinatorsApp::draw_modals() {
             ImGui::SliderFloat("speed", &anim_speed, 0.25f, 3.0f, "%.2fx");
             if (ImGui::IsItemDeactivatedAfterEdit()) flush_anim_cfg();
             if (!anim_on) ImGui::EndDisabled();
+            ImGui::SeparatorText("Profile");
+            ImGui::TextWrapped("Who this device is on a net.");
+            {
+                char name_buf[48];
+                std::snprintf(name_buf, sizeof name_buf, "%s", profile_name.c_str());
+                bool changed = false;
+                if (touch_mode) {
+                    ImGui::Text("name: %s", profile_name.c_str()); // no keyboard on glass yet (Q29)
+                } else if (ImGui::InputText("name", name_buf, sizeof name_buf,
+                                            ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    profile_name = name_buf;
+                    changed = true;
+                }
+                ImGui::TextUnformatted("colour");
+                static const unsigned swatches[] = {0x2f9e8f, 0xc2548a, 0x6f5bd6,
+                                                    0x2b8fd9, 0x8a9b2e, 0xd9822b};
+                for (int i = 0; i < 6; ++i) {
+                    if (i) ImGui::SameLine();
+                    unsigned rgb = swatches[i];
+                    ImVec4 col(((rgb >> 16) & 255) / 255.0f, ((rgb >> 8) & 255) / 255.0f,
+                               (rgb & 255) / 255.0f, 1.0f);
+                    ImGui::PushID(i);
+                    ImGui::PushStyleColor(ImGuiCol_Button, col);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, col);
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, col);
+                    float side = ImGui::GetFrameHeight();
+                    if (ImGui::Button(profile_rgb == rgb ? "*" : " ", ImVec2(side, side))) {
+                        profile_rgb = rgb;
+                        changed = true;
+                    }
+                    ImGui::PopStyleColor(3);
+                    ImGui::PopID();
+                }
+                if (changed) {
+                    maiz::Profile p;
+                    p.id = lan_id;
+                    p.name = profile_name;
+                    p.rgb = profile_rgb;
+                    maiz::save_profile(settings_dir(), p);
+                    core.dispatch("config set actor " + maiz::arg("human:" + profile_name));
+#ifdef IC_NET
+                    if (net) {
+                        net->settings().self.name = profile_name;
+                        net->settings().self.rgb = profile_rgb;
+                    }
+#endif
+                }
+            }
             if (updater) {
                 ImGui::SeparatorText("Updates");
                 maiz::draw_update_settings(*updater, update_view);

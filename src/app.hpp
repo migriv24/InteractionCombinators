@@ -85,6 +85,7 @@ struct CombinatorsApp {
      * drive the LAN panel's buttons without a mouse, so two real processes can be
      * checked talking over real sockets. */
     std::string test_lan;      // "share" | "join"
+    double test_wire_at = 0;   // seconds after start: wire a demo net (self-loop, cycle)
     bool test_auto_allow = false;
     void open_lan_panel() { lan_open = true; }
 
@@ -195,6 +196,13 @@ private:
     void lan_leave();
     void lan_frame();
     void draw_lan_panel();
+    void draw_net_health();
+    // the phone sleeps, Wi-Fi hands over, a lid closes: come back by ourselves
+    maiz::lan::Ipv4 last_host_addr;
+    std::uint16_t last_host_port = 0;
+    long long next_retry_ms = 0;
+    long long retry_delay_ms = 2000;
+    bool reconnecting = false;
 #endif
     bool lan_open = false; // the LAN panel
     std::string net_status; // the status pill: "solo", "in sync with 1", …
@@ -236,6 +244,11 @@ private:
     std::unique_ptr<maiz::update::Updater> updater;
     maiz::UpdateViewState update_view;
     void init_updates();
+    std::filesystem::path settings_dir(); // per machine: profile, update answers
+    void load_profile_once();
+    void rename_net(const std::string& name); // the net IS a mantle; name it
+    std::string net_name() const { return scene.mantle; }
+    char net_name_buf[48] = {};
     void fit_camera();              // frame the whole net in the canvas pane
     int fitted_orientation = -1;    // a phone refits when it is rotated
     std::filesystem::path projects_dir();

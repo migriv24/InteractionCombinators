@@ -3,7 +3,7 @@
   "name": "interactioncombinators",
   "display_name": "Interaction Combinators",
   "kind": "application",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "MIT",
   "repository": "https://github.com/migriv24/InteractionCombinators",
   "description": "Lafont's interaction combinators on a Void Maiz canvas: every gesture and every rewrite is a dispatched, logged, undoable Void Core command, and two people can reduce one net at once.",
@@ -34,29 +34,29 @@
   ],
   "platforms_note": "A SHIPPING RECORD, as Void Maiz and Void Hormiga use the field: both were built and handed to a person (0.2.0, 2026-09-21; the author ran the APK on a phone). The Windows build is a portable .zip and the Android build an .apk, not the setup.exe / .tar.gz that `mago feed` names today, so tools/package_release.ps1 fills in the artifact names and hashes after Mago writes the document (asked of Void Mago 2026-09-21).",
   "release": {
-    "version": "0.4.0",
-    "previous": "0.3.0",
+    "version": "0.4.1",
+    "previous": "0.4.0",
     "change": "compatible",
     "date": "2026-09-22",
-    "summary": "two devices on the same Wi-Fi can work on one net: a phone and a PC, or two PCs",
+    "summary": "a device that sleeps comes back by itself, nets and people have names, and there is a way to tell whether two screens really agree",
     "adds": [
-      "A LAN button (on the bar at the bottom): Share this net, or Join a net someone on your Wi-Fi is sharing",
-      "The host sees who wants to join and presses Allow or Deny; nothing is shared before Allow",
-      "Join from the list of nets the app finds on your Wi-Fi, or type the host's short join code on a keypad",
-      "Changes made on one device appear on the other, and a step fired on one plays its animation on the other"
+      "Your phone reconnects on its own after it sleeps or the Wi-Fi drops, and the host lets it straight back in without asking again",
+      "A profile: your name and colour, kept on this device, shown to everyone you work with (Settings > Profile)",
+      "Nets have names. The host names the net (a net is a mantle), and joiners see that name in the list instead of an address",
+      "The LAN panel says what this device actually holds (agents, wires, questions) and has a Resync now button that asks for the whole net again"
     ],
     "behavior_changes": [
       {
-        "what": "Joining a net replaces the net you have open with the host's (save it first to keep it)",
-        "who_is_affected": "anyone who joins with unsaved work open"
+        "what": "A link with nothing on it for 12 seconds is now treated as dead and says so, instead of claiming to be connected",
+        "who_is_affected": "anyone whose device slept while connected"
       },
       {
-        "what": "The LAN connection is not encrypted. The host allows each person, and only local network addresses are accepted, but anyone on the same Wi-Fi could read the traffic",
-        "who_is_affected": "anyone sharing on a network they do not trust (a cafe, a campus)"
+        "what": "Sharing a net for the first time renames the starter net from 'lafont' to '<your name>-net'",
+        "who_is_affected": "anyone who shares the starter net"
       },
       {
-        "what": "On a network, this device appears under its computer name (or Phone-xxx) instead of 'lafont'",
-        "who_is_affected": "anyone reading the log"
+        "what": "This device is named by your profile (your computer name by default) rather than 'lafont'",
+        "who_is_affected": "anyone reading the log or the member list"
       }
     ]
   }

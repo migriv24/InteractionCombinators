@@ -29,12 +29,14 @@ int main(int argc, char** argv) {
     // test-only: two real processes over real sockets (see app.hpp test_lan)
     std::string test_lan, probe_out;
     bool auto_allow = false, lan_panel = false;
+    double wire_at = 0;
     long long quit_after = 0;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--lan-share")) test_lan = "share";
         if (!std::strcmp(argv[i], "--lan-join")) test_lan = "join";
         if (!std::strcmp(argv[i], "--lan-auto-allow")) auto_allow = true;
         if (!std::strcmp(argv[i], "--lan-panel")) lan_panel = true;
+        if (!std::strcmp(argv[i], "--wire-at") && i + 1 < argc) wire_at = std::atof(argv[++i]);
         if (!std::strcmp(argv[i], "--quit-after-ms") && i + 1 < argc) quit_after = std::atoll(argv[++i]);
         if (!std::strcmp(argv[i], "--probe-out") && i + 1 < argc) probe_out = argv[++i];
     }
@@ -75,6 +77,7 @@ int main(int argc, char** argv) {
     app.on_quit = [&] { glfwSetWindowShouldClose(window, 1); };
     app.test_lan = test_lan;
     app.test_auto_allow = auto_allow;
+    app.test_wire_at = wire_at;
     if (!test_lan.empty()) app.updates_enabled = false; // a test run asks nobody anything
     app.init();
     if (lan_panel) app.open_lan_panel();
