@@ -3,7 +3,7 @@
   "name": "interactioncombinators",
   "display_name": "Interaction Combinators",
   "kind": "application",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "license": "MIT",
   "repository": "https://github.com/migriv24/InteractionCombinators",
   "description": "Lafont's interaction combinators on a Void Maiz canvas: every gesture and every rewrite is a dispatched, logged, undoable Void Core command, and two people can reduce one net at once.",
@@ -34,30 +34,34 @@
   ],
   "platforms_note": "A SHIPPING RECORD, as Void Maiz and Void Hormiga use the field: both were built and handed to a person (0.2.0, 2026-09-21; the author ran the APK on a phone). The Windows build is a portable .zip and the Android build an .apk, not the setup.exe / .tar.gz that `mago feed` names today, so tools/package_release.ps1 fills in the artifact names and hashes after Mago writes the document (asked of Void Mago 2026-09-21).",
   "release": {
-    "version": "0.4.1",
-    "previous": "0.4.0",
+    "version": "0.5.0",
+    "previous": "0.4.1",
     "change": "compatible",
     "date": "2026-09-22",
-    "summary": "a device that sleeps comes back by itself, nets and people have names, and there is a way to tell whether two screens really agree",
+    "summary": "wires that vanished between devices are fixed, the phone has a keyboard and press-and-hold to make a node, and live physics is now shared by the net",
     "adds": [
-      "Your phone reconnects on its own after it sleeps or the Wi-Fi drops, and the host lets it straight back in without asking again",
-      "A profile: your name and colour, kept on this device, shown to everyone you work with (Settings > Profile)",
-      "Nets have names. The host names the net (a net is a mantle), and joiners see that name in the list instead of an address",
-      "The LAN panel says what this device actually holds (agents, wires, questions) and has a Resync now button that asks for the whole net again"
+      "Press and hold on empty canvas (on a phone) to make a node right there",
+      "A keyboard on the phone, so tags, net names and file names can finally be typed",
+      "Suggested tags: what other agents of the same kind carry, one tap to add (from Void Hormiga)",
+      "The LAN panel says when you are on a phone's hotspot, and suggests one when there is no Wi-Fi",
+      "A Linux build, for testing three devices at once (tools/build_linux.sh)"
     ],
     "behavior_changes": [
       {
-        "what": "A link with nothing on it for 12 seconds is now treated as dead and says so, instead of claiming to be connected",
-        "who_is_affected": "anyone whose device slept while connected"
+        "what": "Live physics is now a setting of the NET, not of your device: turning it on turns it on for everyone, and one device runs the simulation while the others receive the positions it settles on",
+        "who_is_affected": "anyone using live physics with other devices joined"
       },
       {
-        "what": "Sharing a net for the first time renames the starter net from 'lafont' to '<your name>-net'",
-        "who_is_affected": "anyone who shares the starter net"
+        "what": "New agents are named with a short per-device tag (gamma-a3f-1), so two devices never mint the same name",
+        "who_is_affected": "anyone who notices agent names"
       },
       {
-        "what": "This device is named by your profile (your computer name by default) rather than 'lafont'",
-        "who_is_affected": "anyone reading the log or the member list"
+        "what": "On a phone, pressing and holding empty canvas opens the add palette instead of the context menu; holding a node or a wire still opens the menu",
+        "who_is_affected": "phone users"
       }
+    ],
+    "fixes": [
+      "Wires made by dragging a port out and creating a node there now reach the other device. Both devices were naming the new node the same thing, and a wire that names its ends could not tell them apart, so it vanished on the other screen"
     ]
   }
 }

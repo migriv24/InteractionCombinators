@@ -13,6 +13,7 @@
 
 #include "voidmaiz/inspector.hpp"
 #include "voidmaiz/project.hpp"
+#include "voidmaiz/rules.hpp"
 
 #include "imgui.h"
 
@@ -373,8 +374,14 @@ std::string auto_name() {
 
 // ── wires as runes ───────────────────────────────────────────────────────────
 
+std::string CombinatorsApp::wire_tag() const {
+    std::string tag = device_tag.empty() ? std::string("l") : device_tag;
+    while (!tag.empty() && tag.back() == '-') tag.pop_back();
+    return tag;
+}
+
 std::string CombinatorsApp::fresh_wire() {
-    return maiz::fresh_wire_name(device_tag.empty() ? "l" : device_tag, wire_counter++);
+    return maiz::fresh_wire_name(wire_tag(), wire_counter++);
 }
 
 void CombinatorsApp::upgrade_wires() {
@@ -480,9 +487,15 @@ void CombinatorsApp::reproject() {
     raw_scene = maiz::project_scene(core);
     scene = maiz::collapse_wires(raw_scene, wire_enc, &wire_classes);
     wire_counter = std::max(wire_counter,
-                            maiz::next_wire_counter(raw_scene, device_tag.empty() ? "l" : device_tag));
+                            maiz::next_wire_counter(raw_scene, wire_tag()));
     model_pos.clear();
     for (const auto& n : scene.nodes) model_pos[n.name] = {n.x, n.y};
+    physics_on = maiz::rule_on(core, "physics");
+    physics_driver = maiz::rule_driver(core, "physics");
+    /* Nobody named, or the driver is this device: simulate. A driver that has
+     * left simply stops moving anything — the picture freezes where it settled,
+     * which is the honest outcome, and anyone may switch it off or take over. */
+    physics_driving = physics_on && (physics_driver.empty() || physics_driver == device_tag);
     phys.clear(); // the model moved: physics restages from truth
     settle_frames = 0;
     active_count = 0;
@@ -546,8 +559,21 @@ void CombinatorsApp::flush_physics() {
     }
 }
 
+/* The switch every surface presses. It is a command, so it is undoable, it is
+ * in the log, and it reaches the other devices the same way a node does. */
+void CombinatorsApp::toggle_physics() {
+    if (physics_on) {
+        if (physics_driving) flush_physics(); // leaving: land the picture first
+        if (std::string cmd = maiz::compile_rule_off(core, "physics"); !cmd.empty())
+            dispatch_and_reproject(cmd);
+    } else if (std::string cmd = maiz::compile_rule_on(core, "physics", device_tag);
+               !cmd.empty()) {
+        dispatch_and_reproject(cmd);
+    }
+}
+
 maiz::Result CombinatorsApp::dispatch_and_reproject(const std::string& cmd) {
-    if (physics_on) flush_physics(); // a settle never interleaves another story
+    if (physics_driving) flush_physics(); // a settle never interleaves another story
     maiz::Result r = core.dispatch(cmd);
     reproject();
     return r;
@@ -569,7 +595,6 @@ void CombinatorsApp::reset_session() {
     ed = maiz::EditorState{};
     anim = StepAnim{};
     auto_reduce = false;
-    physics_on = false;
     phys.clear();
     read_view_config();
     reproject();
@@ -777,8 +802,10 @@ void CombinatorsApp::init() {
     canvas_style.wires = maiz::reified_writer(
         wire_enc, [this] { return fresh_wire(); },
         [this]() -> const std::vector<maiz::WireClass>& { return wire_classes; });
-    palette.entries = {{"gamma", "constructor γ", ""}, {"delta", "duplicator δ", ""},
-                       {"epsilon", "eraser ε", ""}}; // one family: no categories
+    // ASCII only: the built-in font has no Greek, so "γ" drew as "?" in the
+    // palette (2026-09-22). The glyph names carry the same information.
+    palette.entries = {{"gamma", "constructor", ""}, {"delta", "duplicator", ""},
+                       {"epsilon", "eraser", ""}}; // one family: no categories
     recents = [this] {
         std::vector<std::string> out;
         std::ifstream in(recents_file());
@@ -820,8 +847,15 @@ bool CombinatorsApp::start_network() {
         return false;
     }
     maiz::NetOptions o;
-    fs::path store = (base_dir.empty() ? fs::current_path() : base_dir) /
-                     ("replica-" + (device_tag.empty() ? std::string("l") : device_tag) + ".bin");
+    /* Beside the settings, not in whatever folder the app happened to start in.
+     * A desktop run was dropping replica-<tag>.bin into the working directory —
+     * for a shortcut that is the install folder, and for a developer it was the
+     * repository (found 2026-09-22, as untracked files). The tag makes one per
+     * device rather than per run, so a rejoin still resumes where it left off. */
+    fs::path dir = settings_dir(); // NOT base_dir: that is the working directory
+    std::error_code mk;
+    fs::create_directories(dir, mk);
+    fs::path store = dir / ("replica-" + (device_tag.empty() ? std::string("l") : device_tag) + ".bin");
     o.persist = [store](const std::string& bytes) {
         // atomic: write beside, then rename over
         fs::path tmp = store;
@@ -846,7 +880,10 @@ bool CombinatorsApp::start_network() {
  * red agent disappears), and the tag that scopes minted names is random. */
 void CombinatorsApp::prepare_identity() {
     if (lan_id.empty()) lan_id = "dev-" + random_hex(16);
-    if (device_tag.empty()) device_tag = random_hex(3);
+    if (device_tag.empty()) device_tag = random_hex(3) + "-";
+    // every name this device mints from now on is its own: two devices minting
+    // "gamma-1" is a wire that vanishes on the other screen (net_smoke pins it)
+    canvas_style.device_tag = device_tag;
     load_profile_once();
     if (profile_rgb == 0x4f86d9) profile_rgb = maiz::suggested_colour(profile_name);
 }
@@ -1065,7 +1102,13 @@ void CombinatorsApp::draw_lan_panel() {
         if (btn("Share this net")) lan_share();
         ImGui::SameLine();
         if (btn("Join a net")) lan_discover();
-        if (best.empty()) dim("This device does not seem to be on a local network right now.");
+        if (best.empty()) {
+            dim("This device does not seem to be on a local network right now.");
+            dim("No Wi-Fi nearby? Turn on one device's hotspot and join it from the "
+                "other — that is a network, and this works over it.");
+        } else if (std::string what = maiz::lan::network_hint(best[0].address); !what.empty()) {
+            dim(("On " + what + ".").c_str());
+        }
     } else if (lan->hosting()) {
         ImGui::TextWrapped("Sharing \"%s\" as %s.", scene.mantle.c_str(), profile_name.c_str());
         if (!touch_mode) { // naming the net renames its mantle
@@ -1307,7 +1350,14 @@ CombinatorsApp::Probe CombinatorsApp::probe() const {
     p.status = net_status;
     p.net_err = last_net_err;
 #ifdef IC_NET
-    if (net) p.questions = (int)(net->conflicts().size() + net->anomalies().size());
+    if (net) {
+        p.questions = (int)(net->conflicts().size() + net->anomalies().size());
+        for (const auto& l : net->links()) {
+            p.links += l.link + "=" +
+                       (l.closed ? "closed" : (l.open ? "open" : "connecting")) +
+                       (l.in_sync ? "/sync" : "/behind") + " ";
+        }
+    }
 #endif
     std::vector<std::string> parts;
     for (const auto& n : scene.nodes) parts.push_back("n:" + n.name);
@@ -1358,10 +1408,7 @@ void CombinatorsApp::draw_menus() {
             std::string cmd = maiz::compile_relax(scene);
             if (!cmd.empty()) dispatch_and_reproject(cmd);
         }
-        if (ImGui::MenuItem("Live physics", nullptr, physics_on)) {
-            physics_on = !physics_on;
-            if (!physics_on) flush_physics(); // leaving: land the picture
-        }
+        if (ImGui::MenuItem("Live physics", nullptr, physics_on)) toggle_physics();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Selection")) {
@@ -1393,7 +1440,7 @@ void CombinatorsApp::draw_menus() {
                 float wx = ed.cam.x + canvas_w_px * 0.5f / ed.cam.zoom;
                 float wy = ed.cam.y + canvas_h_px * 0.5f / ed.cam.zoom;
                 dispatch_and_reproject(maiz::compile_add(
-                    entry.glyph, maiz::unique_name(scene, entry.glyph), wx, wy));
+                    entry.glyph, maiz::unique_name(scene, entry.glyph, device_tag), wx, wy));
             }
         ImGui::EndMenu();
     }
@@ -1524,7 +1571,7 @@ void CombinatorsApp::draw_actions(float width) {
                 float wx = ed.cam.x + canvas_w_px * 0.5f / ed.cam.zoom;
                 float wy = ed.cam.y + canvas_h_px * 0.5f / ed.cam.zoom;
                 dispatch_and_reproject(maiz::compile_add(
-                    entry.glyph, maiz::unique_name(scene, entry.glyph), wx, wy));
+                    entry.glyph, maiz::unique_name(scene, entry.glyph, device_tag), wx, wy));
             }
         ImGui::EndPopup();
     }
@@ -1534,6 +1581,14 @@ void CombinatorsApp::draw_actions(float width) {
 
 void CombinatorsApp::frame() {
     ImGuiIO& io = ImGui::GetIO();
+    /* First thing in the frame: the phone has no system keyboard, so Maiz draws
+     * one whenever something wants text, and it must run before any widget sees
+     * the touch (voidmaiz/mobile.hpp says why). */
+    maiz::keyboard(keys, touch_mode);
+    if (test_add_at > 0 && ImGui::GetTime() > test_add_at) {
+        test_add_at = 0;
+        ed.add_request = true;
+    }
 #ifdef IC_NET
     surfaces.begin_frame(); // the canvas declares into it; net_frame reads it
 #endif
@@ -1545,7 +1600,7 @@ void CombinatorsApp::frame() {
     }
 
     // ── live physics: stage like a drag, flush ONE batch on settle ───────────
-    if (physics_on && !anim.active && ed.drag == maiz::EditorState::Drag::None) {
+    if (physics_driving && !anim.active && ed.drag == maiz::EditorState::Drag::None) {
         float moved = maiz::relax_step(scene, phys);
         for (auto& n : scene.nodes) {
             auto it = phys.find(n.name);
@@ -1928,7 +1983,7 @@ void CombinatorsApp::draw_modals() {
     }
     if (ImGui::BeginPopupModal("Save project as", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (ImGui::IsWindowAppearing() && !touch_mode) ImGui::SetKeyboardFocusHere();
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(); // raises the keyboard on glass
         bool entered =
             ImGui::InputTextWithHint("##name", "project name…", save_name,
                                      sizeof save_name, ImGuiInputTextFlags_EnterReturnsTrue);
@@ -2034,10 +2089,16 @@ void CombinatorsApp::draw_modals() {
                 maiz::draw_update_settings(*updater, update_view);
             }
             ImGui::SeparatorText("Layout physics");
-            if (ImGui::Checkbox("live physics", &physics_on))
-                if (!physics_on) flush_physics();
-            ImGui::TextDisabled("nodes repel, wires pull; settles as one\n"
-                                "undoable batch — same as Edit > Relax layout");
+            bool on = physics_on;
+            if (ImGui::Checkbox("live physics", &on)) toggle_physics();
+            maiz::dim_wrapped("nodes repel, wires pull; settles as one undoable batch "
+                              "— same as Edit > Relax layout");
+            if (physics_on)
+                maiz::dim_wrapped(physics_driving
+                                      ? "this device is running it; the others receive "
+                                        "the positions it settles on"
+                                      : "another device is running it — it is a rule of "
+                                        "this net, so it is on for everyone");
         }
         ImGui::End();
     }

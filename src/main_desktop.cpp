@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
     }
     // test-only: two real processes over real sockets (see app.hpp test_lan)
     std::string test_lan, probe_out;
+    bool add_box = false, save_as = false;
     bool auto_allow = false, lan_panel = false;
     double wire_at = 0;
     long long quit_after = 0;
@@ -36,6 +37,8 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--lan-join")) test_lan = "join";
         if (!std::strcmp(argv[i], "--lan-auto-allow")) auto_allow = true;
         if (!std::strcmp(argv[i], "--lan-panel")) lan_panel = true;
+        if (!std::strcmp(argv[i], "--add-box")) add_box = true;
+        if (!std::strcmp(argv[i], "--save-as")) save_as = true;
         if (!std::strcmp(argv[i], "--wire-at") && i + 1 < argc) wire_at = std::atof(argv[++i]);
         if (!std::strcmp(argv[i], "--quit-after-ms") && i + 1 < argc) quit_after = std::atoll(argv[++i]);
         if (!std::strcmp(argv[i], "--probe-out") && i + 1 < argc) probe_out = argv[++i];
@@ -81,6 +84,8 @@ int main(int argc, char** argv) {
     if (!test_lan.empty()) app.updates_enabled = false; // a test run asks nobody anything
     app.init();
     if (lan_panel) app.open_lan_panel();
+    if (add_box) app.open_add_box();
+    if (save_as) app.open_save_as();
     const double started = glfwGetTime();
 
     while (!glfwWindowShouldClose(window)) {
@@ -109,8 +114,14 @@ int main(int argc, char** argv) {
         auto p = app.probe();
         std::FILE* f = std::fopen(probe_out.c_str(), "wb");
         if (f) {
-            std::fprintf(f, "status=%s\nnodes=%d wires=%d contested=%d questions=%d\nshape=%s\n",
-                         p.status.c_str(), p.nodes, p.wires, p.contested, p.questions, p.shape.c_str());
+            /* `status` is a snapshot at QUIT, so whichever process outlives the
+             * other correctly reports it gone — which reads like a lost link
+             * unless the links line is there to say what actually happened. */
+            std::fprintf(f,
+                         "status=%s\nnodes=%d wires=%d contested=%d questions=%d\n"
+                         "links=%s\nshape=%s\n",
+                         p.status.c_str(), p.nodes, p.wires, p.contested, p.questions,
+                         p.links.c_str(), p.shape.c_str());
             std::fclose(f);
         }
     }

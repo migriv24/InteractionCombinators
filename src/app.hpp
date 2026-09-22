@@ -77,6 +77,7 @@ struct CombinatorsApp {
         int nodes = 0, wires = 0, contested = 0, pairs = 0, questions = 0;
         std::string status, net_err;
         std::string shape; // sorted node names + drawn wires: equal ⇔ same net
+        std::string links; // per link: open/connecting/closed, and whether in sync
     };
     Probe probe() const;
     std::vector<std::pair<std::string, std::string>> live_pairs() const { return hot_pairs; }
@@ -88,6 +89,10 @@ struct CombinatorsApp {
     double test_wire_at = 0;   // seconds after start: wire a demo net (self-loop, cycle)
     bool test_auto_allow = false;
     void open_lan_panel() { lan_open = true; }
+    // screenshot/test hooks for the two things a gesture opens on glass
+    double test_add_at = 0;   // seconds after start: open the add palette (what a long press does)
+    void open_add_box() { test_add_at = 2.0; }
+    void open_save_as() { want_save_as = true; }              // a field, so: the keyboard
 
     void init();  // build the core, the starter net, read view config
     void frame(); // one ImGui frame (between NewFrame and Render)
@@ -109,6 +114,7 @@ private:
     maiz::WireEncoding wire_enc;
     std::vector<maiz::WireClass> wire_classes;
     unsigned long wire_counter = 1;
+    std::string wire_tag() const; // the device tag, without its trailing dash
     std::string fresh_wire();
     void upgrade_wires(); // plain i:j edges → wire runes (old projects, the starter)
     maiz::EditorState ed;
@@ -153,8 +159,17 @@ private:
     StepAnim anim;
     bool auto_reduce = false;
 
-    // ── live physics (staged ephemera; settles as one batch) ─────────────────
-    bool physics_on = false;
+    /* ── live physics: a RULE of the mantle, not a switch on this device ─────
+     * Turning it on turns it on for everyone looking at this net, because it is
+     * the net that is behaving differently (voidmaiz/rules.hpp). Both flags are
+     * read out of the document in reproject(); nothing writes them directly.
+     * One device — the driver, normally whoever switched it on — actually runs
+     * the simulation and commits the settled positions; the others receive
+     * those as ordinary moves. That is why the positions are not a stream. */
+    bool physics_on = false;      // the rule is on, for this net
+    bool physics_driving = false; // …and this device is the one simulating
+    std::string physics_driver;   // who is (a device tag; empty = nobody named)
+    void toggle_physics();
     maiz::PositionMap phys;
     std::map<std::string, std::pair<float, float>> model_pos;
     int settle_frames = 0;
@@ -243,6 +258,7 @@ private:
     maiz::BottomSheetState sheet;   // the inspector, on a phone held upright
     std::unique_ptr<maiz::update::Updater> updater;
     maiz::UpdateViewState update_view;
+    maiz::KeyboardState keys; // the drawn keyboard, on glass only
     void init_updates();
     std::filesystem::path settings_dir(); // per machine: profile, update answers
     void load_profile_once();
