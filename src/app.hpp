@@ -21,6 +21,7 @@
 #include "voidmaiz/wires.hpp"
 
 #ifdef IC_NET
+#include "voidmaiz/lanlink.hpp"
 #include "voidmaiz/net.hpp"
 #endif
 
@@ -80,6 +81,12 @@ struct CombinatorsApp {
     Probe probe() const;
     std::vector<std::pair<std::string, std::string>> live_pairs() const { return hot_pairs; }
     bool fire(const std::string& a, const std::string& b) { return try_step(a, b); }
+    /* Test-only (desktop launch flags --lan-share / --lan-join / --lan-auto-allow):
+     * drive the LAN panel's buttons without a mouse, so two real processes can be
+     * checked talking over real sockets. */
+    std::string test_lan;      // "share" | "join"
+    bool test_auto_allow = false;
+    void open_lan_panel() { lan_open = true; }
 
     void init();  // build the core, the starter net, read view config
     void frame(); // one ImGui frame (between NewFrame and Render)
@@ -172,7 +179,24 @@ private:
     maiz::Surfaces surfaces;
     bool adopted = false; // a joiner has `use`d the shared mantle
     void net_frame();     // tick, deliver, splice, play what changed
+    bool start_network(); // a Network for the current role, over the current document
+
+    // ── the LAN (VoidMaiz lanlink.hpp; Q36, 2026-09-22) ──────────────────────
+    std::unique_ptr<maiz::LanSession> lan;
+    std::unique_ptr<maiz::lan::MulticastLock> mlock; // Android, while the LAN is open
+    std::string lan_id;          // this device on the LAN (stable for the run)
+    std::string lan_error;
+    std::string lan_code;        // join-by-code, typed or keyed
+    std::string lan_host_name;   // the host this device joined
+    void prepare_identity();
+    void lan_share();
+    void lan_discover();
+    void lan_join(maiz::lan::Ipv4 addr, std::uint16_t port, const std::string& name);
+    void lan_leave();
+    void lan_frame();
+    void draw_lan_panel();
 #endif
+    bool lan_open = false; // the LAN panel
     std::string net_status; // the status pill: "solo", "in sync with 1", …
     long long clock_ms();
 

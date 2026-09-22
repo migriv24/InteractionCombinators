@@ -29,6 +29,11 @@ target_link_libraries(interaction_combinators PRIVATE
   voidmaiz_view    # canvas, inspector, widgets (brings voidmaiz + imgui/GLES3)
   voidmaiz_reduce  # the interaction-net executor
   android log EGL GLESv3)
+# collaboration: Void Palabra's sync + Void Maiz's LAN layer (when ../VoidPalabra exists)
+if(TARGET voidmaiz_net)
+  target_link_libraries(interaction_combinators PRIVATE voidmaiz_net)
+  target_compile_definitions(interaction_combinators PRIVATE IC_NET)
+endif()
 # the glue's entry point is only referenced by the framework — keep it
 target_link_options(interaction_combinators PRIVATE -u ANativeActivity_onCreate)
 if(NOT MSVC)

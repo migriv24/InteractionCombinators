@@ -24,6 +24,7 @@
 #include <ctime>
 #include <fstream>
 #include <sstream>
+#include <random>
 
 namespace red = maiz::reduce;
 namespace fs = std::filesystem;
@@ -758,33 +759,302 @@ void CombinatorsApp::init() {
     init_updates();
     net_status = "solo";
 #ifdef IC_NET
-    if (role != Role::Solo) {
-        voidpalabra::Replica r;
-        std::string why;
-        if (!voidpalabra::Replica::create(replica_id, r, &why)) {
-            log.push_back({"error", "net", "replica: " + why});
-        } else {
-            maiz::NetOptions o;
-            fs::path store = (base_dir.empty() ? fs::current_path() : base_dir) /
-                             ("replica-" + (device_tag.empty() ? std::string("l") : device_tag) + ".bin");
-            o.persist = [store](const std::string& bytes) {
-                // atomic: write beside, then rename over
-                fs::path tmp = store;
-                tmp += ".tmp";
-                { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << bytes; }
-                std::error_code ec;
-                fs::rename(tmp, store, ec);
-            };
-            o.timing.coalesce = 100; // "reduce all" emits a step per frame
-            net = std::make_unique<maiz::Network>(core, std::move(r), std::move(o));
-            net->settings().self.name = profile_name;
-            net->settings().self.rgb = profile_rgb;
-            net_status = role == Role::Host ? "hosting, nobody here yet" : "looking for the host";
-        }
-    }
+    if (role != Role::Solo) start_network();
 #endif
     set_title_now();
 }
+
+#ifdef IC_NET
+namespace {
+std::string random_hex(int digits) {
+    std::random_device rd;
+    std::string out;
+    const char* hex = "0123456789abcdef";
+    for (int i = 0; i < digits; ++i) out += hex[rd() % 16];
+    return out;
+}
+} // namespace
+
+bool CombinatorsApp::start_network() {
+    net.reset();
+    if (replica_id.empty()) replica_id = "ic-" + random_hex(20);
+    voidpalabra::Replica r;
+    std::string why;
+    if (!voidpalabra::Replica::create(replica_id, r, &why)) {
+        log.push_back({"error", "net", "replica: " + why});
+        return false;
+    }
+    maiz::NetOptions o;
+    fs::path store = (base_dir.empty() ? fs::current_path() : base_dir) /
+                     ("replica-" + (device_tag.empty() ? std::string("l") : device_tag) + ".bin");
+    o.persist = [store](const std::string& bytes) {
+        // atomic: write beside, then rename over
+        fs::path tmp = store;
+        tmp += ".tmp";
+        { std::ofstream out(tmp, std::ios::binary | std::ios::trunc); out << bytes; }
+        std::error_code ec;
+        fs::rename(tmp, store, ec);
+    };
+    o.timing.coalesce = 100; // "reduce all" emits a step per frame
+    net = std::make_unique<maiz::Network>(core, std::move(r), std::move(o));
+    net->settings().self.name = profile_name;
+    net->settings().self.rgb = profile_rgb;
+    net_status = role == Role::Host ? "hosting, nobody here yet" : "looking for the host";
+    return true;
+}
+
+/* Who this device is on the LAN. A solo desktop app is "lafont" in its log; on
+ * a network that would make two devices look alike, so the name comes from the
+ * machine, the colour from a palette with no pigments in it (a red outline on a
+ * red agent disappears), and the tag that scopes minted names is random. */
+void CombinatorsApp::prepare_identity() {
+    if (lan_id.empty()) lan_id = "dev-" + random_hex(16);
+    if (device_tag.empty()) device_tag = random_hex(3);
+    if (profile_name == "lafont") {
+        const char* n = std::getenv("COMPUTERNAME");
+        if (!n) n = std::getenv("HOSTNAME");
+        profile_name = android_activity ? "Phone-" + device_tag : (n ? std::string(n) : "Desktop-" + device_tag);
+        core.dispatch("config set actor " + maiz::arg("human:" + profile_name));
+    }
+    static const unsigned palette[] = {0x2f9e8f, 0xc2548a, 0x6f5bd6, 0x2b8fd9, 0x8a9b2e, 0xd9822b};
+    if (profile_rgb == 0x4f86d9) profile_rgb = palette[std::hash<std::string>{}(lan_id) % 6];
+}
+
+void CombinatorsApp::lan_share() {
+    lan_error.clear();
+    prepare_identity();
+    if (!net || role != Role::Host) {
+        role = Role::Host;
+        replica_id.clear(); // a fresh replica for every session: a reused id is refused
+        if (!start_network()) {
+            lan_error = "could not start sync";
+            return;
+        }
+    }
+    lan = std::make_unique<maiz::LanSession>();
+    maiz::LanOptions o;
+    o.app = "interactioncombinators";
+    o.id = lan_id;
+    o.name = profile_name;
+    o.rgb = profile_rgb;
+    o.host = true;
+    std::string err;
+    if (!lan->start(o, &err)) {
+        lan_error = "could not open the network: " + err;
+        lan.reset();
+        return;
+    }
+    send = [this](const std::string& link, const std::string& frame) {
+        if (lan) lan->send(link, frame);
+    };
+    if (android_activity) mlock = std::make_unique<maiz::lan::MulticastLock>(android_activity);
+    log.push_back({"info", "lan", "sharing on the LAN as " + profile_name + " (port " +
+                                      std::to_string(lan->tcp_port()) + ")"});
+}
+
+void CombinatorsApp::lan_discover() {
+    lan_error.clear();
+    prepare_identity();
+    lan = std::make_unique<maiz::LanSession>();
+    maiz::LanOptions o;
+    o.app = "interactioncombinators";
+    o.id = lan_id;
+    o.name = profile_name;
+    o.rgb = profile_rgb;
+    o.host = false;
+    std::string err;
+    if (!lan->start(o, &err)) {
+        lan_error = "could not open the network: " + err;
+        lan.reset();
+        return;
+    }
+    if (android_activity) mlock = std::make_unique<maiz::lan::MulticastLock>(android_activity);
+}
+
+void CombinatorsApp::lan_join(maiz::lan::Ipv4 addr, std::uint16_t port, const std::string& name) {
+    lan_error.clear();
+    if (!lan) lan_discover();
+    if (!lan) return;
+    // a joiner starts EMPTY and adopts what arrives: seeding its own net would mint
+    // a second mantle under the same name and conflict on every merge (E12)
+    net.reset();
+    core = maiz::Core();
+    install_host();
+    core.dispatch("config set actor " + maiz::arg("human:" + profile_name));
+    register_glyphs(core);
+    current_path.clear();
+    role = Role::Join;
+    adopted = false;
+    replica_id.clear();
+    reset_session();
+    if (!start_network()) {
+        lan_error = "could not start sync";
+        return;
+    }
+    send = [this](const std::string& link, const std::string& frame) {
+        if (lan) lan->send(link, frame);
+    };
+    std::string err;
+    if (!lan->join(addr, port, &err)) {
+        lan_error = err;
+        return;
+    }
+    lan_host_name = name;
+    log.push_back({"info", "lan", "asking " + name + " (" + addr.text() + ") to let us join"});
+}
+
+void CombinatorsApp::lan_leave() {
+    long long now = clock_ms();
+    if (net)
+        for (const auto& l : net->links()) net->disconnect(l.link, now);
+    if (lan) lan->stop();
+    lan.reset();
+    mlock.reset();
+    net.reset();
+    send = nullptr;
+    role = Role::Solo;
+    net_status = "solo";
+    lan_host_name.clear();
+    lan_error.clear();
+    log.push_back({"info", "lan", "left the LAN; the net stays here"});
+}
+
+void CombinatorsApp::lan_frame() {
+    if (!lan) return;
+    long long now = clock_ms();
+    lan->poll(now);
+    for (auto& e : lan->take_events()) {
+        bool bad = e.kind == maiz::LanEvent::Kind::Error || e.kind == maiz::LanEvent::Kind::Denied;
+        log.push_back({bad ? "error" : "info", "lan", e.text});
+        if (bad) lan_error = e.text;
+        if (e.kind == maiz::LanEvent::Kind::Connected && net) net->connect(e.link, now);
+        if (e.kind == maiz::LanEvent::Kind::Disconnected && net) net->disconnect(e.link, now);
+    }
+    if (net)
+        for (auto& f : lan->take_frames()) net->receive(f.link, f.frame, now);
+    if (lan->hosting() && !lan->requests().empty()) lan_open = true; // someone is knocking
+    if (test_auto_allow && lan->hosting())
+        for (const auto& r : lan->requests()) lan->allow(r.token);
+    if (test_lan == "join" && role != Role::Join)
+        for (const auto& p : lan->peers())
+            if (p.host) {
+                lan_join(p.addr, p.port, p.name);
+                break;
+            }
+}
+
+void CombinatorsApp::draw_lan_panel() {
+    if (!lan_open) return;
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    float w = touch_mode ? vp->WorkSize.x * 0.94f : std::min(520.0f, vp->WorkSize.x * 0.9f);
+    ImGui::SetNextWindowSize(ImVec2(w, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.45f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::Begin("LAN", &lan_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        return;
+    }
+    auto dim = [](const char* t) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", t);
+        ImGui::PopStyleColor();
+    };
+    auto btn = [&](const char* label) { return maiz::tool_button(label, touch_mode); };
+    const auto best = maiz::lan::lan_interfaces();
+
+    if (!lan) {
+        ImGui::TextWrapped("Work on one net with other devices on this Wi-Fi.");
+        dim("Unencrypted: use it on a network you trust, like your home Wi-Fi. The host allows each person who joins.");
+        ImGui::Spacing();
+        if (btn("Share this net")) lan_share();
+        ImGui::SameLine();
+        if (btn("Join a net")) lan_discover();
+        if (best.empty()) dim("This device does not seem to be on a local network right now.");
+    } else if (lan->hosting()) {
+        ImGui::TextWrapped("Sharing as %s.", profile_name.c_str());
+        if (!best.empty()) {
+            std::string code = maiz::lan::encode_join_code(best[0].address, best[0].netmask, lan->tcp_port(), 47812);
+            ImGui::TextWrapped("Others on this Wi-Fi will see you in their list. Or they can join by code:");
+            ImGui::SetWindowFontScale(1.8f);
+            ImGui::TextUnformatted(code.c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            dim(("address " + best[0].address.text() + ":" + std::to_string(lan->tcp_port())).c_str());
+        }
+        auto reqs = lan->requests();
+        for (const auto& r : reqs) {
+            ImGui::Separator();
+            ImGui::PushID(r.token);
+            ImGui::TextWrapped("%s (%s) wants to join.", r.name.c_str(), r.addr.text().c_str());
+            if (btn("Allow")) lan->allow(r.token);
+            ImGui::SameLine();
+            if (btn("Deny")) lan->deny(r.token);
+            ImGui::PopID();
+        }
+        ImGui::Separator();
+        ImGui::TextWrapped("%d joined. %s", lan->connected(), net_status.c_str());
+        dim("Windows may ask whether to allow network access the first time: allow it on private networks.");
+        if (btn("Stop sharing")) lan_leave();
+    } else if (role == Role::Join && net) {
+        ImGui::TextWrapped("Joined %s. %s", lan_host_name.c_str(), net_status.c_str());
+        if (lan->connected() == 0 && lan_error.empty()) dim("Waiting for the host to allow you...");
+        if (btn("Leave")) lan_leave();
+    } else {
+        ImGui::TextWrapped("Nets on this Wi-Fi:");
+        int shown = 0;
+        for (const auto& p : lan->peers()) {
+            if (!p.host) continue;
+            ++shown;
+            ImGui::PushID(p.id.c_str());
+            std::string label = "Join " + p.name + "  (" + p.addr.text() + ")";
+            if (btn(label.c_str())) lan_join(p.addr, p.port, p.name);
+            ImGui::PopID();
+        }
+        if (!shown) dim("Looking... (the other device must press Share this net)");
+        ImGui::Separator();
+        ImGui::TextUnformatted("Join by code");
+        if (touch_mode) {
+            // a keypad, not the system keyboard: no Java (Q29)
+            ImGui::SetWindowFontScale(1.6f);
+            ImGui::TextUnformatted(lan_code.empty() ? "_" : lan_code.c_str());
+            ImGui::SetWindowFontScale(1.0f);
+            const char* keys[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "0", "<"};
+            float kw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3.0f;
+            for (int k = 0; k < 12; ++k) {
+                if (k % 3) ImGui::SameLine();
+                if (ImGui::Button(keys[k], ImVec2(kw, 0))) {
+                    if (keys[k][0] == '<') {
+                        if (!lan_code.empty()) lan_code.pop_back();
+                    } else if (lan_code.size() < 16) {
+                        lan_code += keys[k];
+                    }
+                }
+            }
+        } else {
+            char buf[32] = {};
+            std::snprintf(buf, sizeof buf, "%s", lan_code.c_str());
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::InputText("##code", buf, sizeof buf, ImGuiInputTextFlags_CharsDecimal)) lan_code = buf;
+        }
+        if (btn("Join by code")) {
+            if (best.empty()) {
+                lan_error = "this device is not on a local network";
+            } else if (auto e = maiz::lan::decode_join_code(lan_code, best[0].address, best[0].netmask, 47812)) {
+                lan_join(e->address, e->port, e->address.text());
+            } else {
+                lan_error = "that code does not describe an address on this network";
+            }
+        }
+        dim("Joining replaces the net you have open. Save it first if you want to keep it.");
+        if (btn("Cancel")) lan_leave();
+    }
+    if (!lan_error.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.28f, 0.22f, 1.0f));
+        ImGui::TextWrapped("%s", lan_error.c_str());
+        ImGui::PopStyleColor();
+    }
+    ImGui::End();
+}
+#endif
 
 // ── the session ──────────────────────────────────────────────────────────────
 
@@ -1033,6 +1303,10 @@ void CombinatorsApp::draw_menus() {
             auto_reduce = true;
         if (ImGui::MenuItem("Stop reducing", nullptr, false, auto_reduce))
             auto_reduce = false;
+#ifdef IC_NET
+        ImGui::Separator();
+        if (ImGui::MenuItem("LAN: share or join…")) lan_open = true;
+#endif
         if (!touch_mode) {
             ImGui::Separator();
             ImGui::MenuItem("Space fires the hovered pair, else a random one",
@@ -1095,14 +1369,17 @@ void CombinatorsApp::draw_actions(float width) {
     enum { Step, Reduce, Undo, Redo, Add, Delete, Clean, Relax };
     std::vector<maiz::BarAction> acts = {
         {"step", 0, can_step, false, true},
-        {auto_reduce ? "stop" : "reduce all", 3, can_step || auto_reduce},
-        {"undo", 1, undo_depth > 0},
-        {"redo", 2, true},
-        {"add", 4, true},
-        {"delete", 5, !ed.selection.empty()},
-        {"clean", 6, true},
-        {"relax", 7, true},
+        {auto_reduce ? "stop" : "reduce all", 4, can_step || auto_reduce},
+        {"undo", 2, undo_depth > 0},
+        {"redo", 3, true},
+        {"add", 5, true},
+        {"delete", 6, !ed.selection.empty()},
+        {"clean", 7, true},
+        {"relax", 8, true},
     };
+#ifdef IC_NET
+    acts.push_back({lan ? (role == Role::Join ? "LAN: joined" : "LAN: sharing") : "LAN", 1, true}); // right after step: it is how two devices meet
+#endif
     switch (maiz::action_bar("actions", acts, touch_mode, width)) {
     case Step: try_step(); break;
     case Reduce: auto_reduce = !auto_reduce; break;
@@ -1120,6 +1397,7 @@ void CombinatorsApp::draw_actions(float width) {
     case Relax:
         if (std::string cmd = maiz::compile_relax(scene); !cmd.empty()) dispatch_and_reproject(cmd);
         break;
+    case Relax + 1: lan_open = true; break; // the LAN panel
     default: break;
     }
     // add: mint at the centre of the visible canvas (a phone has no Shift+A)
@@ -1449,6 +1727,12 @@ void CombinatorsApp::frame() {
         }
         draw_modals();
 #ifdef IC_NET
+        if (!test_lan.empty() && !lan) { // the test flags press the panel's buttons once
+            if (test_lan == "share") lan_share();
+            else lan_discover();
+        }
+        draw_lan_panel();
+        lan_frame();
         net_frame();
 #endif
         return;
@@ -1494,6 +1778,12 @@ void CombinatorsApp::frame() {
     ImGui::End();
     ImGui::PopStyleVar();
 #ifdef IC_NET
+    if (!test_lan.empty() && !lan) { // the test flags press the panel's buttons once
+        if (test_lan == "share") lan_share();
+        else lan_discover();
+    }
+    draw_lan_panel();
+    lan_frame();
     net_frame();
 #endif
     draw_modals();

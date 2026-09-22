@@ -11,6 +11,7 @@
 #include "voidmaiz/widgets.hpp" // apply_touch_metrics
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 
@@ -24,6 +25,18 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--phone")) phone = 1;
         if (!std::strcmp(argv[i], "--phone-landscape")) phone = 2;
+    }
+    // test-only: two real processes over real sockets (see app.hpp test_lan)
+    std::string test_lan, probe_out;
+    bool auto_allow = false, lan_panel = false;
+    long long quit_after = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (!std::strcmp(argv[i], "--lan-share")) test_lan = "share";
+        if (!std::strcmp(argv[i], "--lan-join")) test_lan = "join";
+        if (!std::strcmp(argv[i], "--lan-auto-allow")) auto_allow = true;
+        if (!std::strcmp(argv[i], "--lan-panel")) lan_panel = true;
+        if (!std::strcmp(argv[i], "--quit-after-ms") && i + 1 < argc) quit_after = std::atoll(argv[++i]);
+        if (!std::strcmp(argv[i], "--probe-out") && i + 1 < argc) probe_out = argv[++i];
     }
     const float phone_scale = 2.0f;
     int win_w = 1360, win_h = 800;
@@ -60,7 +73,12 @@ int main(int argc, char** argv) {
     app.install_dir = std::filesystem::weakly_canonical(std::filesystem::absolute(argv[0]), ec).parent_path();
     app.on_title = [&](const std::string& t) { glfwSetWindowTitle(window, t.c_str()); };
     app.on_quit = [&] { glfwSetWindowShouldClose(window, 1); };
+    app.test_lan = test_lan;
+    app.test_auto_allow = auto_allow;
+    if (!test_lan.empty()) app.updates_enabled = false; // a test run asks nobody anything
     app.init();
+    if (lan_panel) app.open_lan_panel();
+    const double started = glfwGetTime();
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -70,6 +88,8 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
 
         app.frame();
+        if (quit_after > 0 && (glfwGetTime() - started) * 1000.0 > (double)quit_after)
+            glfwSetWindowShouldClose(window, 1);
 
         ImGui::Render();
         int w, h;
@@ -82,6 +102,15 @@ int main(int argc, char** argv) {
         glfwSwapBuffers(window);
     }
 
+    if (!probe_out.empty()) { // what this process ended up holding
+        auto p = app.probe();
+        std::FILE* f = std::fopen(probe_out.c_str(), "wb");
+        if (f) {
+            std::fprintf(f, "status=%s\nnodes=%d wires=%d contested=%d questions=%d\nshape=%s\n",
+                         p.status.c_str(), p.nodes, p.wires, p.contested, p.questions, p.shape.c_str());
+            std::fclose(f);
+        }
+    }
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
