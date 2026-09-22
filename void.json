@@ -1,0 +1,37 @@
+{
+  "manifest": "void/0.1",
+  "name": "interactioncombinators",
+  "display_name": "Interaction Combinators",
+  "kind": "application",
+  "version": "0.2.0",
+  "license": "MIT",
+  "repository": "https://github.com/migriv24/InteractionCombinators",
+  "description": "Lafont's interaction combinators on a Void Maiz canvas: every gesture and every rewrite is a dispatched, logged, undoable Void Core command, and two people can reduce one net at once.",
+
+  "requires": [
+    {
+      "name": "voidmaiz",
+      "kind": "runtime",
+      "version": ">=0.1.0",
+      "sibling": "../VoidMaiz",
+      "cmake_var": "VOIDMAIZ_ROOT",
+      "link": "static",
+      "note": "the canvas, gestures, inspector, the reduce executor and the collaboration layer. Void Maiz in turn locates Void Core (../VoidCore) and Void Allomone (../VoidAllomone)."
+    },
+    {
+      "name": "voidpalabra",
+      "kind": "runtime",
+      "version": "*",
+      "sibling": "../VoidPalabra",
+      "cmake_var": "VOIDPALABRA_ROOT",
+      "link": "static",
+      "optional": true,
+      "note": "sync. Present: the desktop build gains Host/Join and the two-window duo bench. Absent: the app builds solo, exactly as before."
+    }
+  ],
+
+  "platforms": {
+    "windows-x64": "shipped",
+    "android-arm64": "shipped (solo; collaboration needs a LAN transport, not yet built)"
+  }
+}

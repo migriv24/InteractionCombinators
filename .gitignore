@@ -1,0 +1,35 @@
+# build outputs
+build/
+out/
+*.obj
+*.o
+*.dll
+*.exe
+*.pdb
+
+# editor / OS noise
+.vscode/
+.vs/
+Thumbs.db
+.DS_Store
+build-release/
+
+# Android build outputs and the SIGNING KEY. The key is minted locally by
+# android/build_apk.ps1 the first time it runs and must never be published:
+# whoever holds it can sign an APK that installs as an update to this one.
+android/build/
+*.apk
+*.idsig
+*.keystore
+
+# release staging (tools/package_release.ps1); the artifacts go on GitHub
+# Releases, not in the tree
+release/
+
+# per-user state the app writes next to itself
+imgui*.ini
+projects/
+duo/
+
+# inter-agent messages are relayed by the author, never committed
+MESSAGE_FOR_*.md

@@ -1,0 +1,54 @@
+# .gitattributes — what a byte means, decided before the first commit (2026-09-21)
+#
+# Copied from Void Maiz, where the reason is written out in full: a tree that grew
+# on Windows with mixed line endings turns one ordinary edit into a whole-file
+# diff. `text=auto` stores text as LF and checks it out however the platform
+# wants.
+
+* text=auto
+
+# ── FILES WHOSE ENDINGS ARE PART OF THEIR CONTRACT ──────────────────────────
+# InteractionCombinators.bat and android/build_apk.ps1 depend on these.
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# ── EXPLICIT TEXT, so nothing here is ever guessed at ────────────────────────
+*.c         text
+*.h         text
+*.m         text
+*.cpp       text
+*.hpp       text
+*.py        text
+*.md        text
+*.txt       text
+*.json      text
+*.cmake     text
+*.in        text
+*.rc        text
+*.vs        text
+*.voidscript text
+CMakeLists.txt text
+.gitignore  text
+.gitattributes text
+
+# ── BINARY, never touched, never diffed as text ─────────────────────────────
+# None are committed today; vendoring a font or a demo image is the likely
+# first case, and Dear ImGui already carries .ttf upstream.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.ttf       binary
+*.otf       binary
+*.woff2     binary
+*.pdf       binary
+*.zip       binary
+*.a         binary
+*.lib       binary
+*.dll       binary
+*.exe       binary
+*.pdb       binary
