@@ -59,8 +59,13 @@ fi
 cmake -S "$parent/VoidCore/core" -B "$parent/VoidCore/core/build" -G Ninja       -DCMAKE_BUILD_TYPE=Release
 cmake --build "$parent/VoidCore/core/build"
 
+# The C++ runtime goes INSIDE the binary. Built with a newer compiler than the
+# target machine has — which is the normal case for a download — a dynamically
+# linked libstdc++ means "version `GLIBCXX_3.4.29` not found" and an app that
+# never opens. glibc stays dynamic (it cannot sensibly be static), so the floor
+# is whatever this machine's glibc is: build on an old one for a portable copy.
 build="$root/build-linux"
-cmake -S "$root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S "$root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=Release       -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
 cmake --build "$build"
 
 bin="$build/bin/interaction_combinators"

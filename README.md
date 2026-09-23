@@ -16,16 +16,32 @@ From [Releases](https://github.com/migriv24/InteractionCombinators/releases):
 
 - **Windows (x64):** unzip and run `interaction_combinators.exe`. Keep the DLLs
   beside it. Windows 10 or later.
+- **Linux (x86_64, arm64):** unpack and run it — nothing to install.
+
+  ```sh
+  tar -xzf InteractionCombinators-<version>-linux-x86_64.tar.gz
+  cd InteractionCombinators-<version>-linux-x86_64
+  ./interaction_combinators
+  ```
+
+  It needs glibc 2.31 or newer (Ubuntu 20.04, Debian 11 and anything later),
+  OpenGL, and X11 — on a Wayland desktop it runs through XWayland, which every
+  Wayland desktop ships. A minimal or server install may be missing the X
+  client libraries; on Debian and Ubuntu that is
+  `sudo apt install libgl1 libx11-6 libxrandr2 libxinerama1 libxcursor1 libxi6`.
+  `libvoidcore.so` travels in the folder and is found there, so the app can live
+  anywhere. `run.sh` is there for habit; it does nothing the binary does not do
+  by itself.
+
 - **Android (arm64):** install the APK (allow installs from your browser or
   file manager when asked). It is signed with a local key rather than a Play
-  Store key, so Android treats it as a sideloaded app. The APK is solo for now;
-  collaborating from a phone needs a LAN transport that is not built yet.
+  Store key, so Android treats it as a sideloaded app.
 
 **Updates.** From 0.3.0 the app asks once whether it may check for new versions
 when it starts. If you say yes, a new version appears as an *update* button that
 lists what changes; nothing downloads or installs until you choose it. On Windows
-the new version opens from a folder beside the old one, which is left untouched.
-On Android the system's own installer asks you to confirm. (0.2.0 has no updater,
+and Linux the new version opens from a folder beside the old one, which is left
+untouched. On Android the system's own installer asks you to confirm. (0.2.0 has no updater,
 so moving to 0.3.0 is by hand, once.)
 
 **On a phone** the layout follows the screen: upright, the actions sit under the

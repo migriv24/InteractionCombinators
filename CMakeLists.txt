@@ -25,6 +25,17 @@ if(NOT MSVC)
   target_compile_options(interaction_combinators PRIVATE -Wall -Wextra)
 endif()
 
+# On Linux, look for libvoidcore.so BESIDE the binary. Unlike Windows, the
+# loader does not search the executable's own directory, so a downloaded folder
+# with the library right there still fails with "libvoidcore.so: cannot open
+# shared object file" — and, worse, the updater's relaunch of a freshly
+# unpacked copy fails the same way. $ORIGIN is the fix, and it makes the
+# wrapper script a convenience rather than a requirement (2026-09-23).
+if(UNIX AND NOT APPLE AND NOT ANDROID)
+  set_target_properties(interaction_combinators PROPERTIES
+    BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
+endif()
+
 # Collaboration: only when Void Maiz built voidmaiz_net (it needs ../VoidPalabra).
 # Without it the app is exactly the solo app it always was.
 if(TARGET voidmaiz_net)
@@ -39,6 +50,10 @@ if(TARGET voidmaiz_net)
   target_compile_definitions(interaction_combinators_duo PRIVATE IC_NET)
   if(NOT MSVC)
     target_compile_options(interaction_combinators_duo PRIVATE -Wall -Wextra)
+  endif()
+  if(UNIX AND NOT APPLE AND NOT ANDROID)
+    set_target_properties(interaction_combinators_duo PROPERTIES
+      BUILD_RPATH "$ORIGIN" INSTALL_RPATH "$ORIGIN")
   endif()
 else()
   message(STATUS "voidmaiz_net not available: Interaction Combinators builds solo only")

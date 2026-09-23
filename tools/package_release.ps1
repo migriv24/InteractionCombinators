@@ -7,7 +7,11 @@
 #
 # Requires the MSYS2 UCRT64 toolchain (C:\msys64\ucrt64) for the desktop build
 # and an Android SDK for the APK (see android\build_apk.ps1).
-param([switch]$SkipApk)
+#
+# -FeedOnly rebuilds nothing and only rewrites void-updates.json from whatever
+# is already in release/ — which is how the Linux tarballs (built on Linux, or
+# in a container; see tools/build_linux.sh) get into the feed.
+param([switch]$SkipApk, [switch]$FeedOnly)
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path $PSScriptRoot -Parent
@@ -19,13 +23,16 @@ $env:PATH = "$ucrt;" + $env:PATH
 $out = "$root\release"
 New-Item -ItemType Directory -Force $out | Out-Null
 
+$name = "InteractionCombinators-$version-windows-x64"
+
+if (-not $FeedOnly) {
+
 # ── desktop: an optimized build of its own (the dev build/ stays unoptimized) ──
 & cmake -S $root -B "$root\build-release" -G Ninja -DCMAKE_BUILD_TYPE=Release
 if ($LASTEXITCODE) { throw "cmake configure failed" }
 & cmake --build "$root\build-release" --target interaction_combinators interaction_combinators_duo
 if ($LASTEXITCODE) { throw "desktop build failed" }
 
-$name = "InteractionCombinators-$version-windows-x64"
 $stage = "$out\$name"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
@@ -79,6 +86,8 @@ if (-not $SkipApk) {
     Write-Host "android: $out\InteractionCombinators-$version.apk"
 }
 
+} # end of -FeedOnly skip
+
 # ── the update feed: void-updates.json, which every installed copy reads ──
 # The document is Void Mago's (`mago feed`: the release notes, the behavior
 # changes, the format). Mago names Windows artifacts `-setup.exe` and everything
@@ -93,8 +102,20 @@ $feedText = & $mago feed interactioncombinators
 if ($LASTEXITCODE) { throw "mago feed failed" }
 $feed = $feedText | Out-String | ConvertFrom-Json
 $base = "https://github.com/migriv24/InteractionCombinators/releases/download/v$version"
-$files = [ordered]@{ "windows-x64" = "$name.zip" }
-if (-not $SkipApk) { $files["android-arm64"] = "InteractionCombinators-$version.apk" }
+$files = [ordered]@{}
+foreach ($known in @(
+        @("windows-x64",  "$name.zip"),
+        @("android-arm64","InteractionCombinators-$version.apk"),
+        # Linux is built elsewhere — on a Linux machine or in a container, by
+        # tools/build_linux.sh — so it is offered when its tarball is sitting in
+        # release/ and passed over when it is not, rather than being required.
+        @("linux-x64",    "InteractionCombinators-$version-linux-x86_64.tar.gz"),
+        @("linux-arm64",  "InteractionCombinators-$version-linux-arm64.tar.gz"))) {
+    $platform, $file = $known
+    if (Test-Path (Join-Path $out $file)) { $files[$platform] = $file }
+    else { Write-Host "feed: no $file in release\ - not offering $platform" }
+}
+if (-not $files.Contains("windows-x64")) { throw "no Windows artifact in $out" }
 $artifacts = [ordered]@{}
 foreach ($platform in $files.Keys) {
     $file = $files[$platform]
