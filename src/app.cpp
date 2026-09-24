@@ -899,13 +899,8 @@ void CombinatorsApp::lan_share() {
             return;
         }
     }
-    lan = std::make_unique<maiz::LanSession>();
-    maiz::LanOptions o;
-    o.app = "interactioncombinators";
-    o.id = lan_id;
-    o.name = profile_name;
-    o.rgb = profile_rgb;
-    o.host = true;
+    lan = std::make_unique<maiz::RnsSession>();
+    maiz::RnsOptions o = rns_options(true);
     if (scene.mantle == "lafont") { // the starter's default: give it a name people read
         std::string mine = profile_name;
         rename_net(mine + "-net");
@@ -922,20 +917,34 @@ void CombinatorsApp::lan_share() {
         if (lan) lan->send(link, frame);
     };
     if (android_activity) mlock = std::make_unique<maiz::lan::MulticastLock>(android_activity);
-    log.push_back({"info", "lan", "sharing on the LAN as " + profile_name + " (port " +
-                                      std::to_string(lan->tcp_port()) + ")"});
+    log.push_back({"info", "lan", "sharing on the LAN as " + profile_name + " (Reticulum, encrypted; destination " +
+                                      lan->destination().substr(0, 8) + ")"});
+}
+
+/* This device on Reticulum. Its identity is kept in settings_dir()/reticulum, so
+ * a host that allowed this device once knows it again after a restart. */
+maiz::RnsOptions CombinatorsApp::rns_options(bool host) {
+    maiz::RnsOptions o;
+    o.app = "interactioncombinators";
+    o.id = lan_id;
+    o.name = profile_name;
+    o.rgb = profile_rgb;
+    o.host = host;
+    o.storage_dir = rns_dir.empty() ? (settings_dir() / "reticulum").string() : rns_dir;
+    if (rns_port) o.port = rns_port;
+    if (auto colon = rns_forward.rfind(':'); colon != std::string::npos) { // --rns-forward host:port
+        o.forward_host = rns_forward.substr(0, colon);
+        o.forward_port = (std::uint16_t)std::atoi(rns_forward.c_str() + colon + 1);
+        o.listen_host = "127.0.0.1"; // a test on one machine stays on it
+    }
+    return o;
 }
 
 void CombinatorsApp::lan_discover() {
     lan_error.clear();
     prepare_identity();
-    lan = std::make_unique<maiz::LanSession>();
-    maiz::LanOptions o;
-    o.app = "interactioncombinators";
-    o.id = lan_id;
-    o.name = profile_name;
-    o.rgb = profile_rgb;
-    o.host = false;
+    lan = std::make_unique<maiz::RnsSession>();
+    maiz::RnsOptions o = rns_options(false);
     std::string err;
     if (!lan->start(o, &err)) {
         lan_error = "could not open the network: " + err;
@@ -945,7 +954,7 @@ void CombinatorsApp::lan_discover() {
     if (android_activity) mlock = std::make_unique<maiz::lan::MulticastLock>(android_activity);
 }
 
-void CombinatorsApp::lan_join(maiz::lan::Ipv4 addr, std::uint16_t port, const std::string& name) {
+void CombinatorsApp::lan_join(const std::string& destination, const std::string& name) {
     lan_error.clear();
     if (!lan) lan_discover();
     if (!lan) return;
@@ -969,16 +978,15 @@ void CombinatorsApp::lan_join(maiz::lan::Ipv4 addr, std::uint16_t port, const st
         if (lan) lan->send(link, frame);
     };
     std::string err;
-    if (!lan->join(addr, port, &err)) {
+    if (!lan->join(destination, &err)) {
         lan_error = err;
         return;
     }
-    last_host_addr = addr; // so a phone that slept comes back by itself
-    last_host_port = port;
+    last_host_dest = destination; // so a phone that slept comes back by itself
     retry_delay_ms = 2000;
     next_retry_ms = 0;
     lan_host_name = name;
-    log.push_back({"info", "lan", "asking " + name + " (" + addr.text() + ") to let us join"});
+    log.push_back({"info", "lan", "asking " + name + " (" + destination.substr(0, 8) + ") to let us join"});
 }
 
 void CombinatorsApp::lan_leave() {
@@ -994,7 +1002,7 @@ void CombinatorsApp::lan_leave() {
     net_status = "solo";
     lan_host_name.clear();
     lan_error.clear();
-    last_host_port = 0;
+    last_host_dest.clear();
     reconnecting = false;
     log.push_back({"info", "lan", "left the LAN; the net stays here"});
 }
@@ -1014,11 +1022,11 @@ void CombinatorsApp::lan_frame() {
         for (auto& f : lan->take_frames()) net->receive(f.link, f.frame, now);
     // a joiner that lost its link comes back on its own, with a backoff. The
     // phone sleeping, Wi-Fi handing over and a closed lid all look like this.
-    if (role == Role::Join && lan->running() && last_host_port && lan->connected() == 0) {
+    if (role == Role::Join && lan->running() && !last_host_dest.empty() && lan->connected() == 0) {
         reconnecting = true;
         if (now >= next_retry_ms) {
             std::string err;
-            lan->join(last_host_addr, last_host_port, &err);
+            lan->join(last_host_dest, &err); // a no-op while an earlier ask is in flight
             next_retry_ms = now + retry_delay_ms;
             retry_delay_ms = std::min<long long>(retry_delay_ms * 2, 8000);
         }
@@ -1050,7 +1058,7 @@ void CombinatorsApp::lan_frame() {
     if (test_lan == "join" && role != Role::Join)
         for (const auto& p : lan->peers())
             if (p.host) {
-                lan_join(p.addr, p.port, p.name);
+                lan_join(p.destination, p.name);
                 break;
             }
 }
@@ -1097,7 +1105,7 @@ void CombinatorsApp::draw_lan_panel() {
 
     if (!lan) {
         ImGui::TextWrapped("Work on one net with other devices on this Wi-Fi.");
-        dim("Unencrypted: use it on a network you trust, like your home Wi-Fi. The host allows each person who joins.");
+        dim("Encrypted (Reticulum). The host allows each person who joins, and knows them again next time.");
         ImGui::Spacing();
         if (btn("Share this net")) lan_share();
         ImGui::SameLine();
@@ -1119,19 +1127,14 @@ void CombinatorsApp::draw_lan_panel() {
             ImGui::SameLine();
             ImGui::TextDisabled("(enter)");
         }
-        if (!best.empty()) {
-            std::string code = maiz::lan::encode_join_code(best[0].address, best[0].netmask, lan->tcp_port(), 47812);
-            ImGui::TextWrapped("Others on this Wi-Fi will see you in their list. Or they can join by code:");
-            ImGui::SetWindowFontScale(1.8f);
-            ImGui::TextUnformatted(code.c_str());
-            ImGui::SetWindowFontScale(1.0f);
-            dim(("address " + best[0].address.text() + ":" + std::to_string(lan->tcp_port())).c_str());
-        }
+        ImGui::TextWrapped("Others on this Wi-Fi will see you in their list.");
+        dim(("this device: " + lan->identity().substr(0, 8)).c_str());
         auto reqs = lan->requests();
         for (const auto& r : reqs) {
             ImGui::Separator();
             ImGui::PushID(r.token);
-            ImGui::TextWrapped("%s (%s) wants to join.", r.name.c_str(), r.addr.text().c_str());
+            // the fingerprint is what Reticulum PROVED about the device, not what it claims
+            ImGui::TextWrapped("%s (device %s) wants to join.", r.name.c_str(), r.identity.substr(0, 8).c_str());
             if (btn("Allow")) lan->allow(r.token);
             ImGui::SameLine();
             if (btn("Deny")) lan->deny(r.token);
@@ -1155,44 +1158,10 @@ void CombinatorsApp::draw_lan_panel() {
             ++shown;
             ImGui::PushID(p.id.c_str());
             std::string label = "Join " + (p.net.empty() ? p.name : p.net) + "  (" + p.name + ")";
-            if (btn(label.c_str())) lan_join(p.addr, p.port, p.name);
+            if (btn(label.c_str())) lan_join(p.destination, p.name);
             ImGui::PopID();
         }
         if (!shown) dim("Looking... (the other device must press Share this net)");
-        ImGui::Separator();
-        ImGui::TextUnformatted("Join by code");
-        if (touch_mode) {
-            // a keypad, not the system keyboard: no Java (Q29)
-            ImGui::SetWindowFontScale(1.6f);
-            ImGui::TextUnformatted(lan_code.empty() ? "_" : lan_code.c_str());
-            ImGui::SetWindowFontScale(1.0f);
-            const char* keys[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "-", "0", "<"};
-            float kw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3.0f;
-            for (int k = 0; k < 12; ++k) {
-                if (k % 3) ImGui::SameLine();
-                if (ImGui::Button(keys[k], ImVec2(kw, 0))) {
-                    if (keys[k][0] == '<') {
-                        if (!lan_code.empty()) lan_code.pop_back();
-                    } else if (lan_code.size() < 16) {
-                        lan_code += keys[k];
-                    }
-                }
-            }
-        } else {
-            char buf[32] = {};
-            std::snprintf(buf, sizeof buf, "%s", lan_code.c_str());
-            ImGui::SetNextItemWidth(160);
-            if (ImGui::InputText("##code", buf, sizeof buf, ImGuiInputTextFlags_CharsDecimal)) lan_code = buf;
-        }
-        if (btn("Join by code")) {
-            if (best.empty()) {
-                lan_error = "this device is not on a local network";
-            } else if (auto e = maiz::lan::decode_join_code(lan_code, best[0].address, best[0].netmask, 47812)) {
-                lan_join(e->address, e->port, e->address.text());
-            } else {
-                lan_error = "that code does not describe an address on this network";
-            }
-        }
         dim("Joining replaces the net you have open. Save it first if you want to keep it.");
         if (btn("Cancel")) lan_leave();
     }
@@ -1581,10 +1550,11 @@ void CombinatorsApp::draw_actions(float width) {
 
 void CombinatorsApp::frame() {
     ImGuiIO& io = ImGui::GetIO();
-    /* First thing in the frame: the phone has no system keyboard, so Maiz draws
-     * one whenever something wants text, and it must run before any widget sees
-     * the touch (voidmaiz/mobile.hpp says why). */
-    maiz::keyboard(keys, touch_mode);
+    /* First thing in the frame. With the system keyboard (the shell found
+     * org.voidmaiz.MaizActivity; voidmaiz/textinput.hpp), Android's own keyboard
+     * does the typing and this draws nothing. Without it, Maiz draws one whenever
+     * something wants text, before any widget sees the touch (mobile.hpp). */
+    if (!system_keyboard) maiz::keyboard(keys, touch_mode);
     if (test_add_at > 0 && ImGui::GetTime() > test_add_at) {
         test_add_at = 0;
         ed.add_request = true;

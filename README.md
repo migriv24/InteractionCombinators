@@ -78,6 +78,14 @@ instead of losing it. The design is in Void Maiz's
 [collaborative canvas](https://github.com/migriv24/VoidMaiz/blob/main/okf/concepts/collaborative-canvas.md)
 notes.
 
+**On real devices** (a PC and a phone on the same Wi-Fi), the **Share this net** /
+**Join a net** buttons do the same over the network. Since 0.6.0 that network is
+[Reticulum](https://reticulum.network), through Void Palabra: the link is
+encrypted, the host allows each device that asks, and a device let in once is
+known again next time by its proven identity. Nets on the Wi-Fi appear in a list;
+there is no join code any more. 0.6.0 cannot share with 0.5.x, so update every
+device.
+
 ## Build
 
 The project builds against its siblings, checked out side by side:

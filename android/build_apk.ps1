@@ -65,6 +65,16 @@ $aaptExit = $LASTEXITCODE
 Pop-Location
 if ($aaptExit) { throw "aapt add failed" }
 
+# 4b. Void Maiz's one Java class (org.voidmaiz.MaizActivity: Android's own
+# keyboard, VoidMaiz okf/concepts/text-input.md), compiled to classes.dex
+$maiz = if ($env:VOIDMAIZ_ROOT) { $env:VOIDMAIZ_ROOT } else { "$here\..\..\VoidMaiz" }
+& "$maiz\android\build_java.ps1" -OutDir "$here\build\dex"
+Push-Location "$here\build\dex"
+& "$($bt.FullName)\aapt.exe" add $unaligned "classes.dex"
+$aaptExit = $LASTEXITCODE
+Pop-Location
+if ($aaptExit) { throw "aapt add classes.dex failed" }
+
 # 5. align (16KB pages — Android 15 requirement)
 $aligned = "$here\build\aligned.apk"
 & "$($bt.FullName)\zipalign.exe" -f -P 16 4 $unaligned $aligned

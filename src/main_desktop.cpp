@@ -27,7 +27,8 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--phone-landscape")) phone = 2;
     }
     // test-only: two real processes over real sockets (see app.hpp test_lan)
-    std::string test_lan, probe_out;
+    std::string test_lan, probe_out, rns_dir, rns_forward;
+    int rns_port = 0;
     bool add_box = false, save_as = false;
     bool auto_allow = false, lan_panel = false;
     double wire_at = 0;
@@ -42,6 +43,9 @@ int main(int argc, char** argv) {
         if (!std::strcmp(argv[i], "--wire-at") && i + 1 < argc) wire_at = std::atof(argv[++i]);
         if (!std::strcmp(argv[i], "--quit-after-ms") && i + 1 < argc) quit_after = std::atoll(argv[++i]);
         if (!std::strcmp(argv[i], "--probe-out") && i + 1 < argc) probe_out = argv[++i];
+        if (!std::strcmp(argv[i], "--rns-dir") && i + 1 < argc) rns_dir = argv[++i];
+        if (!std::strcmp(argv[i], "--rns-port") && i + 1 < argc) rns_port = std::atoi(argv[++i]);
+        if (!std::strcmp(argv[i], "--rns-forward") && i + 1 < argc) rns_forward = argv[++i];
     }
     const float phone_scale = 2.0f;
     int win_w = 1360, win_h = 800;
@@ -79,6 +83,9 @@ int main(int argc, char** argv) {
     app.on_title = [&](const std::string& t) { glfwSetWindowTitle(window, t.c_str()); };
     app.on_quit = [&] { glfwSetWindowShouldClose(window, 1); };
     app.test_lan = test_lan;
+    app.rns_dir = rns_dir;
+    app.rns_port = (std::uint16_t)rns_port;
+    app.rns_forward = rns_forward;
     app.test_auto_allow = auto_allow;
     app.test_wire_at = wire_at;
     if (!test_lan.empty()) app.updates_enabled = false; // a test run asks nobody anything

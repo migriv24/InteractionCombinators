@@ -21,8 +21,8 @@
 #include "voidmaiz/wires.hpp"
 
 #ifdef IC_NET
-#include "voidmaiz/lanlink.hpp"
 #include "voidmaiz/net.hpp"
+#include "voidmaiz/rnslink.hpp" // brings lanlink.hpp: the interface hints, the multicast lock
 #endif
 
 #include <filesystem>
@@ -50,6 +50,7 @@ struct CombinatorsApp {
     std::filesystem::path install_dir;      // the running copy's folder (desktop shell)
     std::filesystem::path prefs_dir;        // per machine; default: the platform's app-data folder
     struct ANativeActivity* android_activity = nullptr; // the Android shell's, for JNI
+    bool system_keyboard = false; // the shell drives Android's keyboard; draw none of our own
 
     // ── collaboration (VoidMaiz okf/concepts/collaborative-canvas.md) ─────────
     // Set before init. Solo is the app as it always was. HOST shares the net it
@@ -86,6 +87,11 @@ struct CombinatorsApp {
      * drive the LAN panel's buttons without a mouse, so two real processes can be
      * checked talking over real sockets. */
     std::string test_lan;      // "share" | "join"
+    /* Two devices on ONE machine (--rns-dir, --rns-port, --rns-forward): each needs
+     * its own Reticulum identity (it lives in settings_dir, which both share) and
+     * its own UDP port, forwarding to the other's. Empty/0 = the defaults. */
+    std::string rns_dir, rns_forward;
+    std::uint16_t rns_port = 0;
     double test_wire_at = 0;   // seconds after start: wire a demo net (self-loop, cycle)
     bool test_auto_allow = false;
     void open_lan_panel() { lan_open = true; }
@@ -197,24 +203,25 @@ private:
     void net_frame();     // tick, deliver, splice, play what changed
     bool start_network(); // a Network for the current role, over the current document
 
-    // ── the LAN (VoidMaiz lanlink.hpp; Q36, 2026-09-22) ──────────────────────
-    std::unique_ptr<maiz::LanSession> lan;
+    // ── the LAN, over Reticulum (VoidMaiz rnslink.hpp; Q37, 2026-09-24) ──────
+    // Encrypted links, and "allowed" kept by proven identity. The author chose
+    // Reticulum only (no LanSession fallback), 2026-09-24.
+    std::unique_ptr<maiz::RnsSession> lan;
     std::unique_ptr<maiz::lan::MulticastLock> mlock; // Android, while the LAN is open
     std::string lan_id;          // this device on the LAN (stable for the run)
     std::string lan_error;
-    std::string lan_code;        // join-by-code, typed or keyed
     std::string lan_host_name;   // the host this device joined
     void prepare_identity();
     void lan_share();
     void lan_discover();
-    void lan_join(maiz::lan::Ipv4 addr, std::uint16_t port, const std::string& name);
+    void lan_join(const std::string& destination, const std::string& name);
+    maiz::RnsOptions rns_options(bool host);
     void lan_leave();
     void lan_frame();
     void draw_lan_panel();
     void draw_net_health();
     // the phone sleeps, Wi-Fi hands over, a lid closes: come back by ourselves
-    maiz::lan::Ipv4 last_host_addr;
-    std::uint16_t last_host_port = 0;
+    std::string last_host_dest; // the host's Reticulum destination
     long long next_retry_ms = 0;
     long long retry_delay_ms = 2000;
     bool reconnecting = false;

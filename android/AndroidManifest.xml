@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The APK shim: pure NativeActivity, zero Java (hasCode=false) — the app is
-     libinteraction_combinators.so. Per okf/concepts/substrates.md, platform
-     shims are build scaffolding with no logic in them. -->
+<!-- The APK shim: a NativeActivity plus ONE Java class, Void Maiz's
+     org.voidmaiz.MaizActivity, which is what lets Android's own keyboard type
+     into the app (VoidMaiz okf/concepts/text-input.md, 2026-09-23). The app is
+     still libinteraction_combinators.so, and the Java holds no logic.
+     adjustNothing: the keyboard must not pan or resize the native surface. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="org.voidmaiz.combinators">
 
@@ -10,7 +12,7 @@
   <!-- LAN collaboration (VoidMaiz okf/concepts/collaborative-canvas.md, E25;
        the list is maiz::lan::android_manifest_permissions). All four are
        "normal" permissions: granted at install, no runtime prompt, no Java,
-       so hasCode=false still holds. CHANGE_WIFI_MULTICAST_STATE is exercised
+       and no Java of their own. CHANGE_WIFI_MULTICAST_STATE is exercised
        only if the app opts into maiz::lan::MulticastLock (phone-to-phone
        discovery). -->
   <uses-permission android:name="android.permission.INTERNET" />
@@ -24,11 +26,12 @@
 
   <application
       android:label="Interaction Combinators"
-      android:hasCode="false"
+      android:hasCode="true"
       android:extractNativeLibs="true"
       android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
     <activity
-        android:name="android.app.NativeActivity"
+        android:name="org.voidmaiz.MaizActivity"
+        android:windowSoftInputMode="adjustNothing"
         android:exported="true"
         android:screenOrientation="fullUser"
         android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density|uiMode">

@@ -15,6 +15,7 @@
  * menu yet. */
 #include "app.hpp"
 
+#include "voidmaiz/textinputview.hpp" // Android's own keyboard (the text-input holiday)
 #include "voidmaiz/widgets.hpp"
 
 #include "imgui.h"
@@ -29,6 +30,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <memory>
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "voidmaiz", __VA_ARGS__)
 
@@ -44,6 +46,10 @@ struct Shell {
     CombinatorsApp app;
 
     // two-finger camera gesture (consumed here, never forwarded to ImGui)
+    // the system keyboard: null on a plain NativeActivity, then the drawn one stays
+    std::unique_ptr<maiz::TextInputPlatform> text_input;
+    maiz::TextInputSession text_session;
+
     bool gesture2 = false;
     float g_x0 = 0, g_y0 = 0, g_x1 = 0, g_y1 = 0;
 };
@@ -106,6 +112,8 @@ void backends_up(Shell& s) {
         android_app* aapp = s.aapp;
         s.app.on_quit = [aapp] { ANativeActivity_finish(aapp->activity); };
         s.app.init();
+        s.text_input = maiz::android_text_input(s.aapp->activity);
+        s.app.system_keyboard = s.text_input != nullptr;
         s.app_ready = true;
     }
     s.backends_ready = true;
@@ -167,6 +175,7 @@ void render_frame(Shell& s) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplAndroid_NewFrame();
     ImGui::NewFrame();
+    maiz::text_input_frame(s.text_session, s.text_input.get()); // first, as documented
     s.app.frame();
     ImGui::Render();
     EGLint w = 0, h = 0;
