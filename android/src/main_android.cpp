@@ -15,6 +15,7 @@
  * menu yet. */
 #include "app.hpp"
 
+#include "voidmaiz/mobile.hpp"        // the safe area: status bar, cutout, gesture strip
 #include "voidmaiz/textinputview.hpp" // Android's own keyboard (the text-input holiday)
 #include "voidmaiz/widgets.hpp"
 
@@ -49,6 +50,11 @@ struct Shell {
     // the system keyboard: null on a plain NativeActivity, then the drawn one stays
     std::unique_ptr<maiz::TextInputPlatform> text_input;
     maiz::TextInputSession text_session;
+
+    // the system's edges (Void Maiz's SafeArea), re-read twice a second: on a
+    // gesture-navigation phone the bottom strip takes every touch as "go home"
+    maiz::SafeArea safe;
+    int safe_age = 1 << 20;
 
     bool gesture2 = false;
     float g_x0 = 0, g_y0 = 0, g_x1 = 0, g_y1 = 0;
@@ -176,6 +182,11 @@ void render_frame(Shell& s) {
     ImGui_ImplAndroid_NewFrame();
     ImGui::NewFrame();
     maiz::text_input_frame(s.text_session, s.text_input.get()); // first, as documented
+    if (++s.safe_age > 30) {
+        s.safe = maiz::android_safe_area(s.aapp->activity);
+        s.safe_age = 0;
+    }
+    maiz::reserve_safe_area(s.safe);
     s.app.frame();
     ImGui::Render();
     EGLint w = 0, h = 0;
