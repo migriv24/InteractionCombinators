@@ -38,6 +38,7 @@
 namespace {
 
 struct Shell {
+    maiz::TouchScrollState scroll;
     android_app* aapp = nullptr;
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
@@ -187,6 +188,7 @@ void render_frame(Shell& s) {
         s.safe_age = 0;
     }
     maiz::reserve_safe_area(s.safe);
+    maiz::touch_scroll(s.scroll, s.app.ui_scale); // a finger has no wheel
     s.app.frame();
     ImGui::Render();
     EGLint w = 0, h = 0;
